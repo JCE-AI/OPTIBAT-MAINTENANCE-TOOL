@@ -1,0 +1,140 @@
+SUMMARY OF FLAGS BY CLIENT:
+==================================================
+
+ABG DALLA:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Support_Flag_Copy: OPTIBAT_SUPPORT
+  - Macrostates_Flag_Copy: OPTIBAT_MACROSTATES
+  - Resultexistance_Flag_Copy: OPTIBAT_RESULTS
+  - OPTIBAT_WATCHDOG: YES
+
+ABG DHAR:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Support_Flag_Copy: OPTIBAT_SUPPORT
+  - Macrostates_Flag_Copy: OPTIBAT_MACROSTATES
+  - Resultexistance_Flag_Copy: OPTIBAT_RESULTEXISTANCE
+
+ABG PALI:
+  - OPTIBAT_ON: YES
+
+ANGUS:
+  - Other_Flags: Purity_TA40_of_TAC_OPTIBAT, UV_Absorbance_OPTIBAT
+
+CEMEX FM1 BALCONES:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: YES
+  - Communication_ECS: YES
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+  - OPTIBAT_WATCHDOG: YES
+
+CRH LEMONA:
+  - OPTIBAT_ON: Kiln_OPTIBAT_ON
+  - Flag_Ready: KILN_OPTIBAT_READY / OPTIBAT_Ready_fromPLANT
+  - Communication_ECS: KILN_OPTIBAT_COMMUNICATION
+
+MOLINS ALION COLOMBIA:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+  - OPTIBAT_WATCHDOG: YES
+
+MOLINS-BCN-BARCELONA:
+  - OPTIBAT_ON: YES
+  - Communication_ECS: KILN_OPTIBAT_COMMUNICATION
+
+TITAN ALEXANDRIA CM7:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+
+TITAN ALEXANDRIA CM8:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+
+TITAN ALEXANDRIA CM9:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+  - OPTIBAT_WATCHDOG: YES
+
+TITAN-KOSJERIC-CM1:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+
+TITAN-KOSJERIC-KILN:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+
+TITAN-KOSJERIC-RM1:
+  - Support_Flag_Copy: OPTIBAT_SUPPORT
+
+TITAN-PENNSUCO-FM3:
+  - OPTIBAT_ON: YES
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Other_Flags: 531OPTIBAT_BlaineInRange
+
+TITAN-PENNSUCO-KILN:
+  - OPTIBAT_ON: 431OPTIBATON
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+
+TITAN-PENNSUCO-VRM:
+  - OPTIBAT_ON: OPTIBATON_OPC
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+
+TITAN-ROANOKE-KILN:
+  - OPTIBAT_ON: YES
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+
+TITAN-SHARR-CM2:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+  - OPTIBAT_WATCHDOG: YES
+
+TITAN-SHARR-KILN:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+  - OPTIBAT_WATCHDOG: YES
+
+TITAN-SHARR-RM2:
+  - OPTIBAT_ON: YES
+  - Flag_Ready: OPTIBAT_READY
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+  - Support_Flag_Copy: YES
+  - Macrostates_Flag_Copy: YES
+  - Resultexistance_Flag_Copy: YES
+  - OPTIBAT_WATCHDOG: YES
+
+TITAN-ROANOKE-FM10:
+  - OPTIBAT_ON: YES
+  - Communication_ECS: OPTIBAT_COMMUNICATION
+
+TITAN-ROANOKE-RM1:
+  - OPTIBAT_ON: YES
+  - Communication_ECS: OPTIBAT_COMMUNICATION

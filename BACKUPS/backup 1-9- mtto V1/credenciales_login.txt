@@ -1,0 +1,28 @@
+=== CREDENCIALES DE ACCESO ===
+Optimitive Monthly Report Generator
+
+📋 USUARIOS DISPONIBLES:
+
+👨‍💼 ADMINISTRADOR:
+   Usuario: Administrador
+   Contraseña: admin123
+   
+👤 DEMO:
+   Usuario: demo
+   Contraseña: demo123
+
+🌐 URLs DE ACCESO:
+   Local: http://localhost:8501
+   Red: http://192.168.1.131:8501
+
+⚠️ NOTA: 
+   - El usuario administrador se llama "Administrador" (con mayúscula)
+   - No "admin" como es común en otros sistemas
+   
+🔧 Configuración técnica:
+   - Las credenciales están en: .streamlit/secrets.toml
+   - Sistema de autenticación: Simple (sin LDAP/AD)
+   - Funciona con archivos locales (no requiere SharePoint)
+
+✅ ESTADO: Aplicación corriendo correctamente
+📅 Fecha: 14 de Agosto, 2025

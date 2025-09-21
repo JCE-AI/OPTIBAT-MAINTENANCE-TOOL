@@ -1,0 +1,176 @@
+OPTIBAT FLAGS ANALYSIS SUMMARY
+==================================================
+Generated: 2025-09-01 14:53:07
+
+SUMMARY STATISTICS:
+- Total clients analyzed: 23
+- Total unique flags found: 22
+- Average flags per client: 4.1
+
+CLIENT FLAGS MAPPING:
+--------------------------------------------------
+
+ABG DALLA:
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_RESULTS
+  - OPTIBAT_SUPPORT
+  - OPTIBAT_WATCHDOG
+
+ABG DHAR:
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_RESULTEXISTANCE
+  - OPTIBAT_SUPPORT
+
+ABG PALI:
+  - OPTIBAT_ON
+
+ANGUS:
+  - Purity_TA40_of_TAC_OPTIBAT
+  - UV_Absorbance_OPTIBAT
+
+CEMEX FM1 BALCONES:
+  - Communication_ECS
+  - Flag_Ready
+  - Macrostates_Flag_Copy
+  - OPTIBAT_ON
+  - OPTIBAT_WATCHDOG
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+CRH LEMONA:
+  - KILN_OPTIBAT_COMMUNICATION
+  - KILN_OPTIBAT_READY
+  - Kiln_OPTIBAT_ON
+  - OPTIBAT_Ready_fromPLANT
+
+MOLINS ALION COLOMBIA:
+  - Macrostates_Flag_Copy
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_WATCHDOG
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+MOLINS-BCN-BARACELONA:
+  - KILN_OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+
+TITAN ALEXANDRIA CM7:
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+
+TITAN ALEXANDRIA CM8:
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+
+TITAN ALEXANDRIA CM9:
+  - Macrostates_Flag_Copy
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_WATCHDOG
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+TITAN-KOSJERIC-CM1:
+  - Macrostates_Flag_Copy
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+TITAN-KOSJERIC-KILN:
+  - Macrostates_Flag_Copy
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+TITAN-KOSJERIC-RM1:
+  - OPTIBAT_SUPPORT
+
+TITAN-PENNSUCO-FM3:
+  - 531OPTIBAT_BlaineInRange
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+
+TITAN-PENNSUCO-KILN:
+  - 431OPTIBATON
+  - OPTIBAT_COMMUNICATION
+
+TITAN-PENNSUCO-VRM:
+  - OPTIBATON_OPC
+  - OPTIBAT_COMMUNICATION
+
+TITAN-ROANOKE-KILN:
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+
+TITAN-SHARR-CM2:
+  - Macrostates_Flag_Copy
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_WATCHDOG
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+TITAN-SHARR-KILN:
+  - Macrostates_Flag_Copy
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_WATCHDOG
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+TITAN-SHARR-RM2:
+  - Macrostates_Flag_Copy
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_WATCHDOG
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+titan-roanoke-fm10:
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+
+titan-roanoke-rm1:
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_ON
+
+FLAG USAGE STATISTICS:
+------------------------------
+OPTIBAT_ON: 18/23 (78.3%)
+OPTIBAT_COMMUNICATION: 15/23 (65.2%)
+OPTIBAT_READY: 11/23 (47.8%)
+Resultexistance_Flag_Copy: 8/23 (34.8%)
+Support_Flag_Copy: 8/23 (34.8%)
+Macrostates_Flag_Copy: 8/23 (34.8%)
+OPTIBAT_WATCHDOG: 7/23 (30.4%)
+OPTIBAT_SUPPORT: 3/23 (13.0%)
+OPTIBAT_MACROSTATES: 2/23 (8.7%)
+KILN_OPTIBAT_COMMUNICATION: 2/23 (8.7%)
+OPTIBAT_RESULTS: 1/23 (4.3%)
+OPTIBAT_RESULTEXISTANCE: 1/23 (4.3%)
+Purity_TA40_of_TAC_OPTIBAT: 1/23 (4.3%)
+UV_Absorbance_OPTIBAT: 1/23 (4.3%)
+Communication_ECS: 1/23 (4.3%)
+Flag_Ready: 1/23 (4.3%)
+Kiln_OPTIBAT_ON: 1/23 (4.3%)
+OPTIBAT_Ready_fromPLANT: 1/23 (4.3%)
+KILN_OPTIBAT_READY: 1/23 (4.3%)
+531OPTIBAT_BlaineInRange: 1/23 (4.3%)
+431OPTIBATON: 1/23 (4.3%)
+OPTIBATON_OPC: 1/23 (4.3%)

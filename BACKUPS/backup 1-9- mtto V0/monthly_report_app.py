@@ -1,0 +1,3083 @@
+"""
+Monthly Report Generator - Optimitive Edition
+Professional SharePoint Integration & Flag Analysis Tool
+Developed by Juan Cruz E. | Powered by Optimitive
+"""
+
+import os
+import io
+import re
+import json
+import time
+import base64
+import zipfile
+import tempfile
+import traceback
+from pathlib import Path
+from datetime import datetime, timedelta
+from typing import List, Optional, Dict, Any, Tuple
+
+import streamlit as st
+import pandas as pd
+import numpy as np
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
+
+# Simple Authentication
+
+# Graph / SharePoint
+import requests
+import msal
+import pytz
+import logging
+import json
+
+# PDF/HTML helpers
+from bs4 import BeautifulSoup
+try:
+    from weasyprint import HTML as WEASY_HTML
+    WEASY_AVAILABLE = True
+except Exception:
+    WEASY_AVAILABLE = False
+
+# =========================
+# CONFIGURATION & THEME
+# =========================
+OPTIMITIVE_COLORS = {
+    'primary_red': '#E31E32',
+    'primary_black': '#000000',
+    'dark_bg': '#FFFFFF',          # White background
+    'medium_bg': '#F8F9FA',        # Light gray
+    'light_bg': '#FFFFFF',         # Pure white
+    'accent_blue': '#0099CC',
+    'text_primary': '#2C3E50',     # Dark blue-gray
+    'text_secondary': '#6C757D',   # Gray
+    'success': '#28A745',
+    'warning': '#FFC107',
+    'error': '#DC3545',
+    'border': '#DEE2E6'            # Light border
+}
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# FLAGS POR CLIENTE - SISTEMA VERSATIL
+def load_client_flags_mapping():
+    """Carga el mapeo de flags por cliente desde Excel"""
+    try:
+        import os
+        excel_path = os.path.join(os.path.dirname(__file__), "STATISTICS FLAGS", "INFORME_FLAGS_CLIENTES-tomardeaqui.xlsx")
+        if os.path.exists(excel_path):
+            df = pd.read_excel(excel_path)
+            
+            # Crear mapeo de flags por cliente
+            client_flags = {}
+            flag_columns = ['OPTIBAT_ON', 'Flag_Ready', 'Communication_ECS', 'Support_Flag_Copy', 
+                          'Macrostates_Flag_Copy', 'Resultexistance_Flag_Copy', 'OPTIBAT_WATCHDOG']
+            
+            for _, row in df.iterrows():
+                cliente = row['Cliente']
+                if pd.notna(cliente) and cliente.strip():
+                    client_flags[cliente] = {}
+                    for flag in flag_columns:
+                        if pd.notna(row[flag]):
+                            client_flags[cliente][flag] = row[flag]
+            
+            # Crear mapeo inverso (flag_name -> [client_specific_names])
+            flag_variations = {}
+            for flag in flag_columns:
+                variations = set()
+                for client_data in client_flags.values():
+                    if flag in client_data:
+                        variations.add(client_data[flag])
+                flag_variations[flag] = list(variations)
+            
+            return client_flags, flag_variations
+        else:
+            logger.warning(f"Archivo de flags por cliente no encontrado: {excel_path}")
+            return {}, {}
+    except Exception as e:
+        logger.error(f"Error cargando flags por cliente: {e}")
+        return {}, {}
+
+# Cargar mapeos al inicializar
+CLIENT_FLAGS_MAPPING, FLAG_VARIATIONS = load_client_flags_mapping()
+
+# FLAGS PRINCIPALES (los 7 que interesan)
+MAIN_FLAGS = [
+    "OPTIBAT_ON", "Flag_Ready", "Communication_ECS", 
+    "Support_Flag_Copy", "Macrostates_Flag_Copy", "Resultexistance_Flag_Copy", "OPTIBAT_WATCHDOG"
+]
+
+FLAG_DESCRIPTIONS = {
+    "OPTIBAT_ON": "Sistema principal activo", 
+    "Flag_Ready": "Sistema listo para operación",
+    "Communication_ECS": "Comunicación con ECS", 
+    "Support_Flag_Copy": "Flag de soporte", 
+    "Macrostates_Flag_Copy": "Estados macro del sistema",
+    "Resultexistance_Flag_Copy": "Existencia de resultados", 
+    "OPTIBAT_WATCHDOG": "Monitor de sistema"
+}
+
+# Todas las variaciones posibles de cada flag
+ALL_FLAG_VARIATIONS = []
+for flag in MAIN_FLAGS:
+    if flag in FLAG_VARIATIONS:
+        ALL_FLAG_VARIATIONS.extend(FLAG_VARIATIONS[flag])
+
+PULSING_SIGNALS_FOR_GAUGE = []
+# Agregar todas las variaciones de flags que pulsan
+for flag_name in ["Communication_ECS", "OPTIBAT_WATCHDOG"]:
+    if flag_name in FLAG_VARIATIONS:
+        PULSING_SIGNALS_FOR_GAUGE.extend(FLAG_VARIATIONS[flag_name])
+
+COLOR_SCHEME = {
+    'primary': '#3498db', 'success': '#27ae60', 'warning': '#f39c12',
+    'danger': '#e74c3c', 'info': '#3498db', 'dark': '#2c3e50', 'light': '#ecf0f1'
+}
+
+st.set_page_config(
+    page_title="Optimitive Monthly Report Generator",
+    page_icon="📊",
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Custom CSS for Optimitive branding
+st.markdown(f"""
+<style>
+    /* Main App Background - White Theme */
+    .stApp {{
+        background-color: {OPTIMITIVE_COLORS['dark_bg']};
+        color: {OPTIMITIVE_COLORS['text_primary']};
+    }}
+    
+    /* Header Styles */
+    .main-header {{
+        background: linear-gradient(90deg, {OPTIMITIVE_COLORS['primary_red']} 0%, #CC1A2C 100%);
+        padding: 2rem;
+        border-radius: 15px;
+        margin-bottom: 2rem;
+        text-align: center;
+        color: white;
+        box-shadow: 0 8px 32px rgba(227, 30, 50, 0.3);
+    }}
+    
+    .brand-title {{
+        font-size: 3rem;
+        font-weight: 900;
+        margin: 0;
+        text-shadow: 3px 3px 6px rgba(0,0,0,0.5);
+        letter-spacing: 2px;
+    }}
+    
+    .brand-subtitle {{
+        font-size: 1.2rem;
+        margin: 1rem 0;
+        opacity: 0.95;
+        font-weight: 500;
+    }}
+    
+    /* KPI Cards */
+    .kpi-card {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['medium_bg']} 0%, {OPTIMITIVE_COLORS['light_bg']} 100%);
+        padding: 1.5rem;
+        border-radius: 15px;
+        border-left: 5px solid {OPTIMITIVE_COLORS['primary_red']};
+        margin: 1rem 0;
+        box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+    }}
+    
+    .kpi-title {{
+        color: {OPTIMITIVE_COLORS['text_secondary']};
+        font-size: 0.9rem;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 1px;
+    }}
+    
+    .kpi-value {{
+        color: {OPTIMITIVE_COLORS['text_primary']};
+        font-size: 2rem;
+        font-weight: 700;
+    }}
+    
+    /* Breadcrumb Navigation */
+    .breadcrumb {{
+        background: {OPTIMITIVE_COLORS['medium_bg']};
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 1rem 0;
+        display: flex;
+        align-items: center;
+        flex-wrap: wrap;
+    }}
+    
+    .breadcrumb a {{
+        color: {OPTIMITIVE_COLORS['accent_blue']};
+        text-decoration: none;
+        font-weight: 600;
+        padding: 0.5rem;
+        border-radius: 5px;
+        transition: all 0.3s ease;
+    }}
+    
+    .breadcrumb a:hover {{
+        background: {OPTIMITIVE_COLORS['light_bg']};
+        color: {OPTIMITIVE_COLORS['primary_red']};
+    }}
+    
+    .breadcrumb .separator {{
+        color: {OPTIMITIVE_COLORS['text_secondary']};
+        margin: 0 0.5rem;
+    }}
+    
+    /* Success/Warning/Error Messages */
+    .success-message {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['success']} 0%, #00AA55 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+        text-align: center;
+        font-weight: bold;
+        box-shadow: 0 4px 15px rgba(0, 204, 102, 0.3);
+    }}
+    
+    .warning-message {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['warning']} 0%, #E6A600 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(255, 184, 0, 0.3);
+    }}
+    
+    .error-message {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['error']} 0%, #E6002D 100%);
+        color: white;
+        padding: 1.5rem;
+        border-radius: 15px;
+        margin: 1rem 0;
+        text-align: center;
+        box-shadow: 0 4px 15px rgba(255, 51, 102, 0.3);
+    }}
+    
+    /* File Browser */
+    .file-browser {{
+        background: {OPTIMITIVE_COLORS['medium_bg']};
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin: 1rem 0;
+    }}
+    
+    .folder-item {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['light_bg']} 0%, #333333 100%);
+        padding: 1rem;
+        border-radius: 10px;
+        margin: 0.5rem 0;
+        cursor: pointer;
+        transition: all 0.3s ease;
+        border: 1px solid transparent;
+    }}
+    
+    .folder-item:hover {{
+        border-color: {OPTIMITIVE_COLORS['primary_red']};
+        transform: translateX(5px);
+    }}
+    
+    .file-item {{
+        background: {OPTIMITIVE_COLORS['light_bg']};
+        padding: 0.8rem;
+        border-radius: 8px;
+        margin: 0.3rem 0;
+        border-left: 3px solid {OPTIMITIVE_COLORS['accent_blue']};
+    }}
+    
+    /* Report Section */
+    .report-section {{
+        background: {OPTIMITIVE_COLORS['medium_bg']};
+        border-radius: 15px;
+        padding: 2rem;
+        margin: 2rem 0;
+        border: 1px solid {OPTIMITIVE_COLORS['primary_red']}33;
+    }}
+    
+    /* Footer */
+    .footer {{
+        text-align: center;
+        padding: 3rem;
+        color: {OPTIMITIVE_COLORS['text_secondary']};
+        border-top: 2px solid {OPTIMITIVE_COLORS['primary_red']};
+        margin-top: 4rem;
+        background: {OPTIMITIVE_COLORS['medium_bg']};
+        border-radius: 15px 15px 0 0;
+    }}
+    
+    /* Buttons Override */
+    .stButton > button {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['primary_red']} 0%, #CC1A2C 100%);
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 0.75rem 2rem;
+        font-weight: bold;
+        transition: all 0.3s ease;
+    }}
+    
+    .stButton > button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 5px 15px rgba(227, 30, 50, 0.4);
+    }}
+    
+    /* Download Buttons */
+    .stDownloadButton > button {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['success']} 0%, #00AA55 100%);
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 0.75rem 2rem;
+        font-weight: bold;
+    }}
+    
+    /* Login Page Styling */
+    .login-container {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['medium_bg']} 0%, {OPTIMITIVE_COLORS['light_bg']} 100%);
+        padding: 3rem;
+        border-radius: 20px;
+        max-width: 500px;
+        margin: 2rem auto;
+        border: 2px solid {OPTIMITIVE_COLORS['primary_red']};
+        box-shadow: 0 15px 35px rgba(227, 30, 50, 0.3);
+    }}
+    
+    .login-header {{
+        text-align: center;
+        margin-bottom: 2rem;
+        color: {OPTIMITIVE_COLORS['text_primary']};
+    }}
+    
+    .login-title {{
+        font-size: 2.5rem;
+        font-weight: 900;
+        color: {OPTIMITIVE_COLORS['primary_red']};
+        margin-bottom: 0.5rem;
+        text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+    }}
+    
+    .login-subtitle {{
+        font-size: 1rem;
+        color: {OPTIMITIVE_COLORS['text_secondary']};
+        margin-bottom: 2rem;
+    }}
+    
+    /* Form Elements for Login */
+    .stForm {{
+        background: transparent !important;
+    }}
+    
+    .stTextInput > div > div > input {{
+        background: {OPTIMITIVE_COLORS['dark_bg']} !important;
+        color: {OPTIMITIVE_COLORS['text_primary']} !important;
+        border: 2px solid {OPTIMITIVE_COLORS['light_bg']} !important;
+        border-radius: 15px !important;
+        padding: 1rem !important;
+        font-size: 1.1rem !important;
+        font-weight: 500 !important;
+    }}
+    
+    .stTextInput > div > div > input:focus {{
+        border-color: {OPTIMITIVE_COLORS['primary_red']} !important;
+        box-shadow: 0 0 15px rgba(227, 30, 50, 0.3) !important;
+    }}
+    
+    .stTextInput > label {{
+        color: {OPTIMITIVE_COLORS['text_primary']} !important;
+        font-size: 1.1rem !important;
+        font-weight: 600 !important;
+        margin-bottom: 0.5rem !important;
+    }}
+    
+    /* Checkbox styling for login */
+    .stCheckbox > div > label > div:first-child {{
+        background: {OPTIMITIVE_COLORS['dark_bg']} !important;
+        border: 2px solid {OPTIMITIVE_COLORS['light_bg']} !important;
+    }}
+    
+    .stCheckbox > div > label > div:first-child:hover {{
+        border-color: {OPTIMITIVE_COLORS['primary_red']} !important;
+    }}
+    
+    .stCheckbox > div > label > span {{
+        color: {OPTIMITIVE_COLORS['text_primary']} !important;
+        font-weight: 600 !important;
+    }}
+    
+    /* Login specific button styling */
+    .login-form .stButton > button {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['primary_red']} 0%, #CC1A2C 100%);
+        color: white;
+        border: none;
+        border-radius: 25px;
+        padding: 1rem 2rem;
+        font-weight: bold;
+        font-size: 1.1rem;
+        width: 100%;
+        margin-top: 1rem;
+        transition: all 0.3s ease;
+    }}
+    
+    .login-form .stButton > button:hover {{
+        transform: translateY(-2px);
+        box-shadow: 0 8px 25px rgba(227, 30, 50, 0.5);
+    }}
+    
+    /* Error and info messages styling */
+    .stAlert {{
+        border-radius: 15px !important;
+        padding: 1rem 1.5rem !important;
+        margin: 1rem 0 !important;
+    }}
+    
+    .stAlert[data-baseweb="notification"] div:first-child {{
+        background: {OPTIMITIVE_COLORS['medium_bg']} !important;
+        border-left: 5px solid {OPTIMITIVE_COLORS['primary_red']} !important;
+    }}
+    
+    /* Welcome message for login */
+    .welcome-message {{
+        background: linear-gradient(135deg, {OPTIMITIVE_COLORS['accent_blue']} 0%, #0077AA 100%);
+        color: white;
+        padding: 2rem;
+        border-radius: 15px;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: 0 8px 25px rgba(0, 153, 204, 0.3);
+    }}
+</style>
+""", unsafe_allow_html=True)
+
+# =========================
+# METRICS REGISTRATION FUNCTIONS
+# =========================
+def get_ip():
+    try:
+        if hasattr(st, "request") and hasattr(st.request, "headers"):
+            ip = st.request.headers.get('X-Forwarded-For', None)
+            if ip:
+                ip = ip.split(',')[0].strip()
+            return ip or "Desconocida"
+        return "Desconocida"
+    except Exception:
+        return "Desconocida"
+
+def log_access(ip):
+    try:
+        import gspread
+        from oauth2client.service_account import ServiceAccountCredentials
+        scope = ["https://spreadsheets.google.com/feeds",'https://www.googleapis.com/auth/drive']
+        
+        creds_json_str = st.secrets.get("gcp_service_account", None)
+        if creds_json_str:
+            if isinstance(creds_json_str, str):
+                creds_dict = json.loads(creds_json_str)
+            else:
+                creds_dict = creds_json_str 
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+        else: 
+            creds = ServiceAccountCredentials.from_json_keyfile_name('proyecto-optibat-dashboard-62a151156279.json', scope)
+
+        client = gspread.authorize(creds)
+        sheet = client.open("Metricas OPTIBAT").sheet1
+        madrid = pytz.timezone("Europe/Madrid")
+        local_time = datetime.now(madrid)
+        sheet.append_row([ip, local_time.strftime("%Y-%m-%d %H:%M:%S")])
+    except Exception as e:
+        # logger.warning(f"No se pudo registrar la métrica en Google Sheets: {e}")
+        pass 
+
+# =========================
+# OPTIBAT METRICS ANALYZER CLASS
+# =========================
+def detect_client_from_flags(columns) -> str:
+    """Detecta el cliente basándose en los flags presentes"""
+    column_set = set(columns)
+    
+    best_match = "GENERIC"
+    max_matches = 0
+    
+    for client, flags in CLIENT_FLAGS_MAPPING.items():
+        matches = 0
+        for flag_value in flags.values():
+            if flag_value in column_set:
+                matches += 1
+        
+        if matches > max_matches:
+            max_matches = matches
+            best_match = client
+    
+    return best_match if max_matches > 0 else "GENERIC"
+
+def get_available_flags_in_data(df) -> list:
+    """Obtiene los flags disponibles en los datos considerando todas las variaciones"""
+    available_flags = []
+    columns = df.columns.tolist()
+    
+    # Buscar todas las flags principales y sus variaciones
+    for flag in MAIN_FLAGS:
+        # Primero buscar la flag exacta
+        if flag in columns and not df[flag].dropna().empty:
+            available_flags.append(flag)
+        # Luego buscar variaciones de clientes
+        elif flag in FLAG_VARIATIONS:
+            for variation in FLAG_VARIATIONS[flag]:
+                if variation in columns and not df[variation].dropna().empty:
+                    available_flags.append(variation)
+                    break  # Solo agregar una variación por flag
+    
+    # También buscar cualquier columna que contenga las palabras clave de las flags
+    for column in columns:
+        if any(keyword in column.upper() for keyword in ['SUPPORT_FLAG', 'SUPPORT FLAG', 'SUPPORTFLAG']) and column not in available_flags:
+            if not df[column].dropna().empty:
+                available_flags.append(column)
+    
+    return available_flags
+
+class OptibatMetricsAnalyzer:
+    def __init__(self):
+        self.df_processed = pd.DataFrame()
+
+    @staticmethod
+    @st.cache_data
+    def load_and_process_files(uploaded_files) -> pd.DataFrame:
+        dfs = []
+        errors = []
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+
+        for idx, file in enumerate(uploaded_files):
+            try:
+                status_text.text(f"Procesando archivo {idx + 1}/{len(uploaded_files)}: {file.name}")
+                
+                # Leemos los encabezados usando la codificación 'latin1'
+                headers = pd.read_csv(file, sep='\t', skiprows=1, nrows=1, header=None, encoding='latin1').iloc[0].tolist()
+                
+                # IMPORTANTE: Volvemos al inicio del archivo para que la siguiente lectura funcione
+                file.seek(0)
+                
+                seen = {}
+                names = []
+                for h in headers:
+                    if h in seen:
+                        seen[h] += 1
+                        names.append(f"{h}_{seen[h]}")
+                    else:
+                        seen[h] = 0
+                        names.append(h)
+                
+                # Leemos el resto del dataframe también con 'latin1'
+                df_temp = pd.read_csv(file, sep='\t', skiprows=10, header=None, names=names, engine='python', encoding='latin1')
+                
+                if "Date" in df_temp.columns:
+                    df_temp["Date"] = pd.to_datetime(df_temp["Date"], errors='coerce')
+                    df_temp = df_temp.dropna(subset=['Date'])
+
+                for flag_col in MAIN_FLAGS:
+                    if flag_col in df_temp.columns:
+                        df_temp[flag_col] = pd.to_numeric(df_temp[flag_col], errors='coerce')
+                
+                df_temp['source_file'] = file.name 
+                dfs.append(df_temp)
+                progress_bar.progress((idx + 1) / len(uploaded_files))
+            except Exception as e:
+                logger.error(f"Error processing file {file.name}: {str(e)}")
+                # Mostramos el error en la interfaz de Streamlit para que sea visible
+                st.error(f"Error al procesar el archivo {file.name}: {e}")
+                errors.append(f"Error en {file.name}: {str(e)}")
+                continue
+        
+        progress_bar.empty()
+        status_text.empty()
+        
+        if not dfs:
+            raise ValueError("No se pudieron procesar los archivos o no contienen datos válidos.")
+        
+        df_combined = pd.concat(dfs, ignore_index=True)
+        if "Date" in df_combined.columns:
+            df_combined = df_combined.sort_values("Date").reset_index(drop=True)
+        return df_combined
+
+    @staticmethod
+    def calculate_system_status(df: pd.DataFrame) -> Dict[str, any]:
+        kpis = {
+            'system_on': 'No Data', 
+            'uptime_pct': '0%', 
+            'flag_ready_deactivations': 0, 
+            'anomalies': 0, 
+            'anomalies_breakdown': {}, 
+            'heartbeat_status': 'No Data', 
+            'data_quality': 0.0
+        }
+        if df.empty: return kpis
+
+        if "OPTIBAT_ON" in df.columns and not df["OPTIBAT_ON"].dropna().empty:
+            pct_on = df["OPTIBAT_ON"].mean() * 100
+            kpis['system_on'] = "Activo" if pct_on >= 50 else "Inactivo"
+            kpis['uptime_pct'] = f"{pct_on:.1f}%"
+        elif "OPTIBAT_ON" in df.columns and df["OPTIBAT_ON"].dropna().empty:
+            kpis['system_on'] = 'Datos Inválidos'
+            kpis['uptime_pct'] = '0%'
+        
+        kpis['flag_ready_deactivations'] = OptibatMetricsAnalyzer._count_flag_ready_deactivations(df)
+        
+        anomaly_data = OptibatMetricsAnalyzer._count_anomalies(df) 
+        kpis['anomalies'] = anomaly_data['total_anomalies']
+        kpis['anomalies_breakdown'] = anomaly_data
+        
+        kpis['heartbeat_status'] = OptibatMetricsAnalyzer._get_heartbeat_status(df)
+        
+        relevant_flag_cols = [flag for flag in MAIN_FLAGS if flag in df.columns]
+        if not relevant_flag_cols:
+            kpis['data_quality'] = 0.0
+        else:
+            total_possible_values = df.shape[0] * len(relevant_flag_cols)
+            if total_possible_values > 0:
+                non_null_values = df[relevant_flag_cols].notna().sum().sum()
+                kpis['data_quality'] = (non_null_values / total_possible_values * 100)
+            else:
+                kpis['data_quality'] = 0.0
+        return kpis
+
+    @staticmethod
+    def _count_flag_ready_deactivations(df: pd.DataFrame) -> int:
+        if "Flag_Ready" not in df.columns or df["Flag_Ready"].dropna().empty:
+            return 0
+        fr = df["Flag_Ready"].dropna()
+        return int(((fr.shift(1) == 1) & (fr == 0)).sum())
+
+    @staticmethod
+    def _count_anomalies(df: pd.DataFrame) -> Dict[str, int]: 
+        anomaly_details = {
+            'stuck_Communication_ECS': 0,
+            'stuck_FM1_COMMS_HeartBeat': 0,
+            'stuck_OPTIBAT_WATCHDOG': 0,
+            'zero_Support_Flag_Copy': 0,
+            'zero_Macrostates_Flag_Copy': 0,
+            'zero_Resultexistance_Flag_Copy': 0
+        }
+        total_count = 0
+        
+        stuck_check_config = {
+            "Communication_ECS": "stuck_Communication_ECS", 
+            "FM1_COMMS_HeartBeat": "stuck_FM1_COMMS_HeartBeat", 
+            "OPTIBAT_WATCHDOG": "stuck_OPTIBAT_WATCHDOG"
+        }
+        min_stuck_length_for_anomaly = 7 
+
+        for col, key_name in stuck_check_config.items():
+            if col in df.columns:
+                c_series = df[col].dropna() 
+                if len(c_series) >= min_stuck_length_for_anomaly:
+                    block_ids = c_series.diff().ne(0).cumsum()
+                    block_sizes = c_series.groupby(block_ids).transform('size')
+                    num_anomalous = len(block_ids[block_sizes >= min_stuck_length_for_anomaly].unique())
+                    anomaly_details[key_name] = num_anomalous
+                    total_count += num_anomalous
+        
+        zero_check_config = {
+            "Support_Flag_Copy": "zero_Support_Flag_Copy",
+            "Macrostates_Flag_Copy": "zero_Macrostates_Flag_Copy",
+            "Resultexistance_Flag_Copy": "zero_Resultexistance_Flag_Copy"
+        }
+        for col, key_name in zero_check_config.items():
+            if col in df.columns:
+                num_zeros = int((df[col] == 0).sum())
+                anomaly_details[key_name] = num_zeros
+                total_count += num_zeros
+        
+        anomaly_details['total_anomalies'] = total_count
+        return anomaly_details
+
+    @staticmethod
+    def _get_heartbeat_status(df: pd.DataFrame, hours_window: int = 12, stuck_threshold: int = 6) -> str:
+        hb_column = "FM1_COMMS_HeartBeat"
+        if df.empty or hb_column not in df.columns or "Date" not in df.columns:
+            return "Sin Datos"
+        
+        latest_timestamp = df["Date"].max()
+        if pd.isna(latest_timestamp):
+            return "Fecha Inválida"
+        
+        window_start = latest_timestamp - pd.Timedelta(hours=hours_window)
+        df_window = df[df["Date"] >= window_start].copy()
+        
+        if df_window.empty or df_window[hb_column].dropna().empty:
+            return f"Sin Datos ({hours_window}h)"
+        
+        hb_signal = df_window[hb_column].dropna()
+        if hb_signal.empty:
+            return "Sin Señal HB"
+
+        if len(hb_signal) < 2 : 
+            return "✅ Normal (Pocos datos)"
+
+        consecutive_groups = hb_signal.diff().ne(0).cumsum()
+        block_lengths = hb_signal.groupby(consecutive_groups).transform('size')
+        
+        if (block_lengths > stuck_threshold).any(): 
+            max_stuck = block_lengths[block_lengths > stuck_threshold].max()
+            return f"❌ Anómalo (Pegado {max_stuck} veces)"
+        else: 
+            if hb_signal.nunique() > 1: 
+                return "✅ Normal (Pulsando)"
+            else: 
+                max_stuck_val = block_lengths.max() if not block_lengths.empty else len(hb_signal)
+                if max_stuck_val > 1 : 
+                    return f"✅ Normal (Pegado {max_stuck_val} veces)" 
+                else: 
+                    return "✅ Normal (Estable)"
+
+    @staticmethod
+    def calculate_pulsing_gauge_value(series: pd.Series, stuck_threshold_anomaly: int = 6) -> float:
+        if series.empty:
+            return 0.0
+
+        signal = series.dropna()
+        if signal.empty:
+            return 0.0
+
+        n_total_points = len(signal)
+        
+        if n_total_points < (stuck_threshold_anomaly + 1): 
+            return 100.0
+
+        block_ids = signal.diff().ne(0).cumsum()
+        point_block_sizes = signal.groupby(block_ids).transform('size')
+
+        ok_points_mask = (point_block_sizes <= stuck_threshold_anomaly)
+        n_ok_points = ok_points_mask.sum()
+            
+        health_percentage = (n_ok_points / n_total_points) * 100
+        return health_percentage
+    
+    @staticmethod
+    def create_gauge_chart(value: float, title: str, description: str = "") -> go.Figure:
+        if value < 50:
+            color = COLOR_SCHEME['danger']
+        elif value < 75: 
+            color = COLOR_SCHEME['warning']
+        else: 
+            color = COLOR_SCHEME['success']
+
+        fig = go.Figure(go.Indicator(
+            mode="gauge+number", 
+            value=value,
+            domain={'x': [0, 1], 'y': [0, 1]},
+            title={'text': f"<b>{title}</b><br><span style='font-size:0.7em;color:#666'>{description}</span>", 'font': {'size': 20}},
+            number={'suffix': "%", 'font': {'size': 40, 'color': color}},
+            gauge={
+                'axis': {'range': [None, 100], 'tickwidth': 1, 'tickcolor': "darkgray", 'tickfont': {'size': 14}},
+                'bar': {'color': color, 'thickness': 0.8}, 
+                'bgcolor': "white",
+                'borderwidth': 2, 
+                'bordercolor': "gray",
+                'steps': [ 
+                    {'range': [0, 50], 'color': 'rgba(231, 76, 60, 0.1)'},  
+                    {'range': [50, 75], 'color': 'rgba(243, 156, 18, 0.1)'},
+                    {'range': [75, 100], 'color': 'rgba(39, 174, 96, 0.1)'} 
+                ],
+                'threshold': {'line': {'color': "black", 'width': 4}, 'thickness': 0.75, 'value': 75} 
+            }
+        ))
+        fig.update_layout(height=300, margin=dict(l=20, r=20, t=60, b=20), paper_bgcolor='rgba(0,0,0,0)', font=dict(family="Arial, sans-serif"))
+        return fig
+
+    @staticmethod
+    def create_timeline_chart(df: pd.DataFrame) -> go.Figure:
+        fig = go.Figure()
+        color_palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
+        y_offsets = {}
+        current_offset = 0
+        offset_step = 5
+        
+        drawable_flags_count = sum(1 for flag_name in MAIN_FLAGS if flag_name in df.columns and not df[flag_name].dropna().empty)
+        
+        primary_flag_for_source_file_info = MAIN_FLAGS[0] if MAIN_FLAGS else None 
+
+        for i_flag, flag_name in enumerate(MAIN_FLAGS):
+            if flag_name in df.columns and 'source_file' in df.columns and not df[flag_name].dropna().empty:
+                y_offsets[flag_name] = current_offset
+                filled_series = df[flag_name].ffill().bfill()
+                
+                custom_data_for_hover = df[[flag_name, 'source_file']].values
+
+                ht = (
+                    f"<span style='font-size:1.4em'><b>{flag_name.replace('_', ' ')}</b></span><br>" +
+                    f"<span style='font-size:1.2em'>Estado: %{{customdata[0]}}</span>"
+                )
+                
+                if flag_name == primary_flag_for_source_file_info:
+                    ht += f"<br><span style='font-size:1.2em'>Archivo: %{{customdata[1]}}</span>"
+                
+                ht += "<extra></extra>"
+
+                fig.add_trace(go.Scatter(
+                    x=df["Date"], 
+                    y=filled_series + y_offsets[flag_name], 
+                    mode='lines', 
+                    name=flag_name.replace("_", " "),
+                    line=dict(width=5, shape='hv', color=color_palette[i_flag % len(color_palette)]), 
+                    hovertemplate=ht,
+                    customdata=custom_data_for_hover 
+                ))
+                current_offset += offset_step
+        
+        ytick_positions = [offset_val_tick + 0.5 for flag_name_tick, offset_val_tick in y_offsets.items()]
+        ytick_labels = [flag_name_tick.replace("_", " ") for flag_name_tick, offset_val_tick in y_offsets.items()]
+        
+        chart_height = max(1200, drawable_flags_count * 200 + 300) 
+
+        fig.update_layout(
+            yaxis=dict(
+                tickvals=ytick_positions if ytick_positions else None, 
+                ticktext=ytick_labels if ytick_labels else None,
+                tickfont=dict(size=18), 
+                showgrid=True, 
+                zeroline=False, 
+                gridcolor='rgba(0,0,0,0.05)',
+                range=[-offset_step, current_offset + offset_step/2] if y_offsets else None 
+            ),
+            xaxis=dict(
+                title=dict(text='<b>Fecha</b>', font=dict(size=22)), 
+                tickfont=dict(size=18), 
+                autorange=True, 
+                rangeslider_visible=False 
+            ),
+            hovermode='x unified', 
+            font=dict(size=16), 
+            height=chart_height, 
+            margin=dict(l=250, r=50, t=120, b=100), 
+            legend=dict(
+                font=dict(size=16), 
+                orientation="h", 
+                yanchor="bottom", y=1.03, 
+                xanchor="right", x=1
+            ),
+            hoverlabel=dict(
+                bgcolor="rgba(255,255,255,0.9)", 
+                font_size=14, 
+                font_family="Arial, sans-serif", 
+                align="left"
+            ),
+            title={
+                'text': "Línea de Tiempo del Sistema (Estados de Flags)<br><br><br><br><br><br><br><br><br>", 
+                'font': {'size': 30, 'color': COLOR_SCHEME['dark']}, 
+                'x': 0.5, 'xanchor': 'center', 'y': 0.97 
+            },
+            paper_bgcolor='white', 
+            plot_bgcolor='rgba(245,245,245,1)',
+        )
+        return fig
+    
+    @staticmethod
+    def create_interactive_duration_chart(df: pd.DataFrame, flag_column: str = 'OPTIBAT_ON') -> go.Figure:
+        """Crea gráfico interactivo con anotaciones de duración para cambios de estado"""
+        fig = go.Figure()
+        
+        if flag_column not in df.columns or df[flag_column].empty:
+            # Gráfico vacío si no hay datos
+            fig.add_annotation(text="No hay datos disponibles para mostrar", 
+                             xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False,
+                             font=dict(size=45))  # 3x más grande
+            fig.update_layout(height=750, title=f"Estado {flag_column.replace('_', ' ')} - Sin Datos")
+            return fig
+        
+        # Preparar datos para el gráfico con anotaciones de duración
+        df_clean = df.dropna(subset=[flag_column, 'Date']).copy()
+        df_clean = df_clean.sort_values('Date')
+        
+        # Detectar si existe Flag_Ready para colorear fondo
+        has_flag_ready = 'Flag_Ready' in df_clean.columns
+        
+        # Detectar cambios de estado
+        df_clean['state_change'] = df_clean[flag_column].diff() != 0
+        df_clean['state_change'].iloc[0] = True  # Primer punto siempre es cambio
+        
+        # Agregar formas de fondo basadas en Flag_Ready si existe (COLORES MÁS FUERTES)
+        if has_flag_ready:
+            # Crear segmentos de colores de fondo
+            flag_ready_changes = df_clean[df_clean['Flag_Ready'].diff() != 0]
+            for i in range(len(flag_ready_changes) - 1):
+                current = flag_ready_changes.iloc[i]
+                next_change = flag_ready_changes.iloc[i + 1]
+                
+                # Colores del fondo MENOS CONTRASTANTES (60% menos fuerte)
+                bg_color = "rgba(76, 175, 80, 0.32)" if current['Flag_Ready'] == 1 else "rgba(244, 67, 54, 0.32)"
+                
+                fig.add_shape(
+                    type="rect",
+                    xref="x", yref="paper",
+                    x0=current['Date'], x1=next_change['Date'],
+                    y0=0, y1=1,
+                    fillcolor=bg_color,
+                    opacity=0.32,  # Reducida 60%: 0.8 * 0.4 = 0.32
+                    layer="below",
+                    line_width=0
+                )
+        
+        # Crear línea de tiempo con puntos de cambio
+        fig.add_trace(go.Scatter(
+            x=df_clean['Date'],
+            y=df_clean[flag_column],
+            mode='lines+markers',
+            name=flag_column.replace('_', ' '),
+            line=dict(width=2, shape='hv'),  # Línea más delgada (de 6 a 2)
+            marker=dict(size=8, symbol='circle'),  # Marcadores más pequeños (de 16 a 8)
+            hovertemplate=f"<b>{flag_column.replace('_', ' ')}</b><br>" +
+                         "Fecha: %{x}<br>" +
+                         "Estado: %{y}<br>" +
+                         "<extra></extra>"
+        ))
+        
+        # Agregar anotaciones de duración en cambios de estado
+        changes = df_clean[df_clean['state_change']]
+        for i in range(len(changes) - 1):
+            current = changes.iloc[i]
+            next_change = changes.iloc[i + 1]
+            duration = next_change['Date'] - current['Date']
+            
+            if duration.total_seconds() > 0:
+                # Calcular duración en formato legible
+                hours = duration.total_seconds() / 3600
+                if hours < 1:
+                    duration_text = f"{duration.total_seconds()/60:.0f}min"
+                elif hours < 24:
+                    duration_text = f"{hours:.1f}h"
+                else:
+                    duration_text = f"{duration.days}d {hours%24:.0f}h"
+                
+                # Agregar anotación con texto REDUCIDO a la mitad
+                fig.add_annotation(
+                    x=current['Date'] + duration/2,
+                    y=current[flag_column] + 0.1,
+                    text=duration_text,
+                    showarrow=True,
+                    arrowhead=2,
+                    arrowcolor="blue",
+                    bgcolor="rgba(255,255,255,0.9)",
+                    bordercolor="blue",
+                    borderwidth=2,
+                    font=dict(size=15)  # Reducido de 30 a la mitad = 15
+                )
+        
+        fig.update_layout(
+            title="",  # ELIMINAR TÍTULO para dar más espacio al gráfico
+            xaxis_title="Fecha",
+            yaxis_title="Estado",
+            height=750,  # 1500 / 2 = 750
+            hovermode='x unified',
+            yaxis=dict(
+                tickmode='linear', 
+                tick0=0, 
+                dtick=1,
+                tickfont=dict(size=17)  # Reducido 60%: 42 * 0.4 = 17 (aprox)
+            ),
+            xaxis=dict(
+                tickfont=dict(size=17)  # Reducido 60%: 42 * 0.4 = 17 (aprox)
+            ),
+            showlegend=True,
+            legend=dict(
+                orientation="h",  # Horizontal en lugar de vertical
+                yanchor="top",    # Anclaje superior
+                y=0.98,          # Muy arriba
+                xanchor="center", # Centrado horizontalmente
+                x=0.5,           # Centro horizontal
+                font=dict(size=16)  # Leyenda más pequeña (de 42 a 16)
+            ),
+            margin=dict(l=60, r=60, t=60, b=60),  # Márgenes optimizados
+            font=dict(size=20)  # Texto general más pequeño (de 42 a 20)
+        )
+        
+        return fig
+    
+    @staticmethod
+    def create_global_donut_chart(df: pd.DataFrame) -> go.Figure:
+        """Crea gráfico de rosquilla para distribución global de operación"""
+        fig = go.Figure()
+        
+        # Calcular distribución de estados principales
+        if 'OPTIBAT_ON' in df.columns:
+            on_count = (df['OPTIBAT_ON'] == 1).sum()
+            off_count = (df['OPTIBAT_ON'] == 0).sum()
+            
+            labels = ['Sistema ON', 'Sistema OFF']
+            values = [on_count, off_count]
+            colors = ['#2ecc71', '#e74c3c']  # Verde para ON, Rojo para OFF
+            
+            fig.add_trace(go.Pie(
+                labels=labels,
+                values=values,
+                hole=0.6,  # Crear efecto donut
+                marker=dict(colors=colors, line=dict(color='#FFFFFF', width=2)),
+                hovertemplate="<b>%{label}</b><br>" +
+                             "Registros: %{value}<br>" +
+                             "Porcentaje: %{percent}<br>" +
+                             "<extra></extra>",
+                textinfo='label+percent',
+                textfont=dict(size=14)
+            ))
+            
+            # Agregar texto central
+            total_records = len(df)
+            fig.add_annotation(
+                text=f"<b>Total</b><br>{total_records:,}<br>registros",
+                x=0.5, y=0.5,
+                font_size=16,
+                showarrow=False
+            )
+            
+        fig.update_layout(
+            title="Distribución Global de Operación del Sistema",
+            title_x=0.5,
+            height=700,  # 1000 - 30% = 700
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.1, xanchor="center", x=0.5)
+        )
+        
+        return fig
+    
+    @staticmethod
+    def create_enhanced_timeline_chart(df: pd.DataFrame) -> go.Figure:
+        """Versión mejorada del timeline chart sin superposiciones"""
+        fig = go.Figure()
+        color_palette = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2", "#17becf"]
+        
+        # Obtener flags disponibles en los datos
+        available_flags = [flag for flag in MAIN_FLAGS if flag in df.columns and not df[flag].dropna().empty]
+        
+        if not available_flags:
+            fig.add_annotation(text="No hay flags disponibles para mostrar", 
+                             xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False)
+            fig.update_layout(height=400, title="Timeline - Sin Datos")
+            return fig
+        
+        # Crear trazas con separación vertical clara
+        y_position = 0
+        y_spacing = 2  # Espaciado entre flags
+        
+        for i, flag_name in enumerate(available_flags):
+            # Procesar datos de la flag
+            flag_data = df[flag_name].ffill().bfill()
+            
+            # Crear hover template informativo
+            hover_template = (
+                f"<b>{flag_name.replace('_', ' ')}</b><br>" +
+                f"Fecha: %{{x}}<br>" +
+                f"Estado: %{{customdata}}<br>" +
+                "<extra></extra>"
+            )
+            
+            # Agregar traza
+            fig.add_trace(go.Scatter(
+                x=df["Date"],
+                y=[y_position] * len(df),  # Posición Y fija para cada flag
+                mode='markers',
+                name=flag_name.replace("_", " "),
+                marker=dict(
+                    size=8,
+                    color=flag_data,
+                    colorscale=[[0, '#e74c3c'], [1, '#2ecc71']],  # Rojo para 0, Verde para 1
+                    showscale=False,
+                    symbol='circle'
+                ),
+                customdata=flag_data,
+                hovertemplate=hover_template
+            ))
+            
+            y_position += y_spacing
+        
+        # Configurar layout mejorado
+        fig.update_layout(
+            title="Timeline del Sistema - Estados de Flags",
+            xaxis=dict(
+                title="Fecha",
+                showgrid=True,
+                gridcolor='rgba(0,0,0,0.1)'
+            ),
+            yaxis=dict(
+                title="Flags del Sistema",
+                tickvals=[i * y_spacing for i in range(len(available_flags))],
+                ticktext=[flag.replace("_", " ") for flag in available_flags],
+                showgrid=True,
+                gridcolor='rgba(0,0,0,0.1)',
+                range=[-y_spacing/2, (len(available_flags) - 0.5) * y_spacing]
+            ),
+            height=max(400, len(available_flags) * 100 + 200),  # Altura dinámica
+            hovermode='closest',
+            showlegend=True,
+            legend=dict(
+                orientation="h",
+                yanchor="bottom",
+                y=1.02,
+                xanchor="center",
+                x=0.5
+            ),
+            margin=dict(l=150, r=50, t=100, b=50),
+            paper_bgcolor='white',
+            plot_bgcolor='rgba(248,248,248,1)'
+        )
+        
+        return fig
+
+# =========================
+# OPTIBAT METRICS DASHBOARD FUNCTION
+# =========================
+def show_unified_dashboard():
+    """Dashboard unificado que combina todas las funcionalidades"""
+    
+    # Header principal único
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, {OPTIMITIVE_COLORS['primary_red']} 0%, #B71C1C 100%); 
+                color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; text-align: center;">
+        <h1 style="margin: 0; font-size: 2.5rem;">OPTIBAT MAINTENANCE TOOL</h1>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Verificar si hay datos cargados
+    if 'global_metrics_data' not in st.session_state or st.session_state.get('global_metrics_data', pd.DataFrame()).empty:
+        st.markdown(f"""
+        <div style="background: {OPTIMITIVE_COLORS['medium_bg']}; padding: 2rem; border-radius: 15px; text-align: center; margin: 2rem 0;">
+            <h3 style="color: {OPTIMITIVE_COLORS['text_primary']}; margin: 0 0 1rem 0;">👋 Bienvenido</h3>
+            <p style="color: {OPTIMITIVE_COLORS['text_secondary']}; margin: 0; font-size: 1.1rem;">
+                👈 <strong>Carga archivos STATISTICS</strong> en la barra lateral para comenzar el análisis
+            </p>
+            <div style="margin-top: 2rem;">
+                <h4 style="color: {OPTIMITIVE_COLORS['primary_red']};">🎯 Funcionalidades</h4>
+                <p>✅ Detección automática de cliente por flags<br>
+                ✅ Análisis de {len(MAIN_FLAGS)} flags principales<br>
+                ✅ Dashboards interactivos con KPIs<br>
+                ✅ Soporte para {len(CLIENT_FLAGS_MAPPING)} configuraciones de cliente</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        return
+    
+    # Datos disponibles - mostrar dashboard completo
+    df_processed = st.session_state['global_metrics_data']
+    detected_client = detect_client_from_flags(df_processed.columns)
+    available_flags = get_available_flags_in_data(df_processed)
+    
+    # SECCIÓN 1: INFORMACIÓN DEL CLIENTE
+    col1, col2, col3 = st.columns([2, 2, 2])
+    
+    with col1:
+        st.markdown(f"""
+        <div style="background: {OPTIMITIVE_COLORS['success']}; color: white; padding: 1rem; border-radius: 10px; text-align: center;">
+            <h4 style="margin: 0;">CLIENTE</h4>
+            <h3 style="margin: 0.5rem 0 0 0;">{detected_client}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with col2:
+        st.markdown(f"""
+        <div style="background: {OPTIMITIVE_COLORS['accent_blue']}; color: white; padding: 1rem; border-radius: 10px; text-align: center;">
+            <h4 style="margin: 0;">FLAGS ACTIVOS</h4>
+            <h3 style="margin: 0.5rem 0 0 0;">{len(available_flags)}/{len(MAIN_FLAGS)}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+    with col3:
+        st.markdown(f"""
+        <div style="background: {OPTIMITIVE_COLORS['warning']}; color: white; padding: 1rem; border-radius: 10px; text-align: center;">
+            <h4 style="margin: 0;">REGISTROS</h4>
+            <h3 style="margin: 0.5rem 0 0 0;">{len(df_processed):,}</h3>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Continuar con el análisis usando los datos existentes
+    show_metrics_analysis(df_processed, available_flags)
+
+def show_metrics_analysis(df_processed, available_flags):
+    """Muestra el análisis de métricas usando los datos procesados"""
+    
+    # Filtro de fechas si está disponible
+    df_display = df_processed.copy()
+    date_range_main = None
+    
+    if "Date" in df_processed.columns and not df_processed["Date"].dropna().empty:
+        st.markdown("### Filtro Temporal")
+        col1_date, col2_date, col3_date = st.columns([1, 3, 1])
+        with col2_date:
+            min_date = df_processed["Date"].min().date()
+            max_date = df_processed["Date"].max().date()
+            date_range_main = st.date_input(
+                "Selecciona el rango de fechas",
+                value=(min_date, max_date),
+                min_value=min_date,
+                max_value=max_date,
+                format="DD/MM/YYYY"
+            )
+            if len(date_range_main) == 2:
+                start_date, end_date = date_range_main
+                mask = (df_processed["Date"] >= pd.Timestamp(start_date)) & \
+                       (df_processed["Date"] <= pd.Timestamp(end_date).replace(hour=23, minute=59, second=59))
+                df_display = df_processed[mask].copy()
+                st.info(f"📊 **{len(df_display):,} registros** desde {start_date.strftime('%d/%m/%Y')} hasta {end_date.strftime('%d/%m/%Y')}")
+    
+    if df_display.empty:
+        st.warning("⚠️ No hay datos en el rango seleccionado.")
+        return
+    
+    # KPIs principales
+    kpis = OptibatMetricsAnalyzer.calculate_system_status(df_display)
+    
+    st.markdown("### Indicadores Clave de Rendimiento")
+    kpi_cols = st.columns(6)
+    
+    with kpi_cols[0]:
+        status_color = "Activo" if kpis['system_on'] == "Activo" else "Inactivo" if kpis['system_on'] == "Inactivo" else "N/A"
+        st.metric("Estado Sistema", f"{status_color}")
+    
+    with kpi_cols[1]:
+        st.metric("Tiempo Activo", kpis.get('uptime_pct', '0%'))
+    
+    with kpi_cols[2]:
+        st.metric("Calidad Datos", f"{kpis.get('data_quality', 0):.1f}%")
+    
+    with kpi_cols[3]:
+        st.metric("Desactivaciones", kpis.get('flag_ready_deactivations', 0))
+    
+    with kpi_cols[4]:
+        st.metric("Anomalías", kpis.get('anomalies', 0))
+    
+    with kpi_cols[5]:
+        heartbeat_status = "Normal" if kpis['heartbeat_status'] == "Normal" else "Anómalo" if kpis['heartbeat_status'] == "Stuck" else "N/A"
+        st.metric("HeartBeat", f"{heartbeat_status}")
+    
+    # Gauges de flags disponibles - MOSTRAR TODAS LAS FLAGS
+    if available_flags:
+        st.markdown("### Estado de Flags en Tiempo Real")
+        
+        # Calcular número de columnas dinámicamente (máximo 4 por fila)
+        num_flags = len(available_flags)
+        num_rows = (num_flags + 3) // 4  # Redondear hacia arriba
+        
+        for row in range(num_rows):
+            # Crear columnas para esta fila
+            start_idx = row * 4
+            end_idx = min(start_idx + 4, num_flags)
+            flags_in_row = available_flags[start_idx:end_idx]
+            gauge_cols = st.columns(len(flags_in_row))
+            
+            for i, flag_name in enumerate(flags_in_row):
+                if flag_name in df_display.columns:
+                    gauge_value = df_display[flag_name].mean() * 100
+                    description = FLAG_DESCRIPTIONS.get(flag_name, "Flag del sistema")
+                    
+                    with gauge_cols[i]:
+                        fig_gauge = OptibatMetricsAnalyzer.create_gauge_chart(gauge_value, flag_name, description)
+                        st.plotly_chart(fig_gauge, use_container_width=True)
+    
+    # SECCIÓN NUEVA: Gráfico de Rosquilla Global
+    st.markdown("### Distribución Global de Operación")
+    donut_fig = OptibatMetricsAnalyzer.create_global_donut_chart(df_display)
+    st.plotly_chart(donut_fig, use_container_width=True)
+    
+    # SECCIÓN NUEVA: Gráfico Interactivo con Duraciones
+    if 'OPTIBAT_ON' in df_display.columns:
+        st.markdown("### Estados OPTIBAT_ON con Duraciones")
+        duration_fig = OptibatMetricsAnalyzer.create_interactive_duration_chart(df_display, 'OPTIBAT_ON')
+        st.plotly_chart(duration_fig, use_container_width=True)
+    
+    # Timeline ORIGINAL con bloques 0-1
+    if "Date" in df_display.columns and not df_display["Date"].dropna().empty:
+        st.markdown("### Timeline del Sistema")
+        timeline_fig = OptibatMetricsAnalyzer.create_timeline_chart(df_display)
+        st.plotly_chart(timeline_fig, use_container_width=True)
+    
+    # Sección de datos raw (opcional)
+    with st.expander("Explorar Datos Detallados"):
+        st.dataframe(df_display[['Date'] + available_flags if 'Date' in df_display.columns else available_flags].head(200), 
+                    use_container_width=True, height=300)
+    
+    # Exportación
+    st.markdown("### Exportar Resultados")
+    col1_exp, col2_exp = st.columns(2)
+    
+    with col1_exp:
+        if not df_display.empty:
+            csv_data = df_display.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="Descargar CSV",
+                data=csv_data,
+                file_name=f"optibat_analysis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                mime="text/csv"
+            )
+    
+    with col2_exp:
+        kpis_json = json.dumps(kpis, indent=2, ensure_ascii=False).encode('utf-8')
+        st.download_button(
+            label="Descargar KPIs JSON",
+            data=kpis_json,
+            file_name=f"optibat_kpis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json",
+            mime="application/json"
+        )
+
+def show_optibat_metrics_dashboard():
+    """Display the OPTIBAT Metrics Dashboard"""
+    
+    # Store df_processed in session_state for the filter
+    if 'df_processed_global' not in st.session_state:
+        st.session_state.df_processed_global = pd.DataFrame()
+
+    st.markdown("""
+    <div style="background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); 
+                color: white; padding: 2rem; border-radius: 15px; margin-bottom: 2rem; 
+                text-align: center; box-shadow: 0 8px 32px rgba(30, 60, 114, 0.3);">
+        <h1 style="text-align:center; margin:0; font-size:3rem;">OPTIBAT METRICS DASHBOARD</h1>
+        <p style="text-align:center; margin:0.5rem 0 0 0; font-size:1.2rem; opacity:0.9;">
+            Sistema de Análisis y Monitoreo de STATISTICS
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Check if global files are loaded
+    uploaded_files = st.session_state.get('global_txt_files', [])
+    
+    if not uploaded_files:
+        st.info("👈 **Usa el cargador global en la barra lateral** para alimentar este dashboard con archivos .txt")
+        return
+    
+    # Advanced options in sidebar for this mode
+    with st.sidebar:
+        st.markdown("---")
+        st.markdown("### 🔧 Opciones Dashboard Métricas")
+        show_raw_data = st.checkbox("Mostrar datos crudos", value=False, key="metrics_show_raw")
+        export_results = st.checkbox("Habilitar exportación", value=False, key="metrics_export")
+        st.markdown("---")
+        st.markdown(f"""
+        **Versión:** 1.0  
+        **Última actualización:** {datetime.now().strftime('%Y-%m-%d')}  
+        **Desarrollado por:** Juan Cruz E
+        """)
+
+    # Use the globally processed data
+    df_processed_for_display = st.session_state.get('global_metrics_data', pd.DataFrame())
+    
+    if df_processed_for_display.empty:
+        st.warning("⚠️ No se encontraron datos procesados. Verifica que los archivos .txt sean válidos.")
+        return 
+    
+    df_display = pd.DataFrame() 
+    date_range_main = None 
+    
+    if "Date" in df_processed_for_display.columns and not df_processed_for_display["Date"].dropna().empty:
+        st.markdown("### 📅 Filtro de Fechas")
+        col1_main_date, col2_main_date, col3_main_date = st.columns([1, 3, 1])
+        with col2_main_date:
+            min_date_overall = df_processed_for_display["Date"].min().date()
+            max_date_overall = df_processed_for_display["Date"].max().date()
+            date_range_main = st.date_input(
+                "Selecciona el rango de fechas para los gráficos principales",
+                value=(min_date_overall, max_date_overall),
+                min_value=min_date_overall,
+                max_value=max_date_overall,
+                format="DD/MM/YYYY",
+                key="main_dashboard_date_filter"
+            )
+            if len(date_range_main) == 2:
+                start_date_main, end_date_main = date_range_main
+                mask_main = (df_processed_for_display["Date"] >= pd.Timestamp(start_date_main)) & \
+                              (df_processed_for_display["Date"] <= pd.Timestamp(end_date_main).replace(hour=23, minute=59, second=59))
+                df_display = df_processed_for_display[mask_main].copy()
+                st.info(f"📊 Mostrando datos desde **{start_date_main.strftime('%d/%m/%Y')}** hasta **{end_date_main.strftime('%d/%m/%Y')}** ({len(df_display):,} registros)")
+            else:
+                st.warning("⚠️ Por favor selecciona un rango válido para los gráficos principales.")
+                df_display = pd.DataFrame() 
+    else:
+        df_display = df_processed_for_display.copy()
+        st.info("ℹ️ Mostrando todos los datos disponibles")
+
+    if df_display.empty and uploaded_files:
+        st.warning("⚠️ No hay datos para mostrar en el rango seleccionado.")
+    
+    # KPIs and main visualizations based on df_display
+    if not df_display.empty:
+        kpis = OptibatMetricsAnalyzer.calculate_system_status(df_display)
+        
+        st.markdown("### 📊 Indicadores Clave de Rendimiento (KPIs)")
+        kpi_cols = st.columns(6)
+        
+        with kpi_cols[0]: 
+            status_color = "positive" if kpis['system_on'] == "Activo" else "negative"
+            if kpis['system_on'] == 'Datos Inválidos': status_color = "warning"
+            st.markdown(f"""
+            <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        text-align: center; height: 150px; display: flex; flex-direction: column; justify-content: center;">
+                <div style="color: #666; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Estado del Sistema</div>
+                <div style="font-size: 2rem; font-weight: 700; margin: 0; color: {'#27ae60' if status_color == 'positive' else '#e74c3c' if status_color == 'negative' else '#f39c12'};">{kpis['system_on']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with kpi_cols[1]: 
+            uptime_val = 0.0
+            try:
+                uptime_val = float(str(kpis['uptime_pct']).rstrip('%'))
+            except ValueError:
+                pass 
+            uptime_color = "#27ae60" if uptime_val >= 90 else "#e74c3c" if uptime_val < 50 else "#3498db"
+            st.markdown(f"""
+            <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        text-align: center; height: 150px; display: flex; flex-direction: column; justify-content: center;">
+                <div style="color: #666; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Tiempo Activo</div>
+                <div style="font-size: 2rem; font-weight: 700; margin: 0; color: {uptime_color};">{kpis['uptime_pct']}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with kpi_cols[2]: 
+            deactivations_count = kpis['flag_ready_deactivations']
+            deactivations_color = "#27ae60" if deactivations_count == 0 else "#e74c3c" if deactivations_count > 5 else "#f39c12"
+            st.markdown(f"""
+            <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        text-align: center; height: 150px; display: flex; flex-direction: column; justify-content: center;">
+                <div style="color: #666; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Flag Ready (1 → 0)</div>
+                <div style="font-size: 2rem; font-weight: 700; margin: 0; color: {deactivations_color};">{deactivations_count:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with kpi_cols[3]: 
+            anomaly_total = kpis['anomalies']
+            anomaly_color = "#27ae60" if anomaly_total == 0 else "#e74c3c" if anomaly_total > 10 else "#3498db"
+            st.markdown(f"""
+            <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        text-align: center; height: 150px; display: flex; flex-direction: column; justify-content: center;">
+                <div style="color: #666; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Anomalías Detectadas</div>
+                <div style="font-size: 2rem; font-weight: 700; margin: 0; color: {anomaly_color};">{anomaly_total:,}</div>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        with kpi_cols[4]: 
+            hb_status_text = kpis['heartbeat_status']
+            hb_color = "#27ae60" 
+            if "Anómalo" in hb_status_text: hb_color = "#e74c3c"
+            elif "Sin Datos" in hb_status_text or "Fecha Inválida" in hb_status_text : hb_color = "#3498db"
+            st.markdown(f"""
+            <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        text-align: center; height: 150px; display: flex; flex-direction: column; justify-content: center;">
+                <div style="color: #666; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Heartbeat FM1</div>
+                <div style="font-size: 1.1rem; font-weight: 700; margin: 0; color: {hb_color}; line-height: 1.3em; word-wrap: break-word; overflow-wrap: break-word;">{hb_status_text}</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with kpi_cols[5]: 
+            quality_val = kpis['data_quality']
+            quality_color = "#27ae60" if quality_val >= 90 else "#e74c3c" if quality_val < 50 else "#3498db"
+            st.markdown(f"""
+            <div style="background: white; padding: 1.5rem; border-radius: 10px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        text-align: center; height: 150px; display: flex; flex-direction: column; justify-content: center;">
+                <div style="color: #666; font-size: 0.9rem; font-weight: 600; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 0.5px;">Calidad de Datos</div>
+                <div style="font-size: 2rem; font-weight: 700; margin: 0; color: {quality_color};">{quality_val:.1f}%</div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        # Show anomaly details if present
+        if 'anomalies_breakdown' in kpis and kpis['anomalies_breakdown']['total_anomalies'] > 0:
+            with st.expander("🔍 Detalles de Anomalías Detectadas", expanded=False):
+                breakdown = kpis['anomalies_breakdown']
+                details_md = []
+                if breakdown.get('stuck_Communication_ECS', 0) > 0: details_md.append(f"- **Comunicación ECS Pegada (7+):** `{breakdown.get('stuck_Communication_ECS', 0)}`")
+                if breakdown.get('stuck_FM1_COMMS_HeartBeat', 0) > 0: details_md.append(f"- **HeartBeat FM1 Pegado (7+):** `{breakdown.get('stuck_FM1_COMMS_HeartBeat', 0)}`")
+                if breakdown.get('stuck_OPTIBAT_WATCHDOG', 0) > 0: details_md.append(f"- **Watchdog OPTIBAT Pegado (7+):** `{breakdown.get('stuck_OPTIBAT_WATCHDOG', 0)}`")
+                if breakdown.get('zero_Support_Flag_Copy', 0) > 0: details_md.append(f"- **Support_Flag_Copy en Cero:** `{breakdown.get('zero_Support_Flag_Copy', 0)}`")
+                if breakdown.get('zero_Macrostates_Flag_Copy', 0) > 0: details_md.append(f"- **Macrostates_Flag_Copy en Cero:** `{breakdown.get('zero_Macrostates_Flag_Copy', 0)}`")
+                if breakdown.get('zero_Resultexistance_Flag_Copy', 0) > 0: details_md.append(f"- **Resultexistance_Flag_Copy en Cero:** `{breakdown.get('zero_Resultexistance_Flag_Copy', 0)}`")
+                if details_md: st.markdown("\n".join(details_md))
+                else: st.markdown("No se encontraron detalles específicos.")
+
+        if "Anómalo" in kpis['heartbeat_status']:
+            st.warning("⚠️ **Alerta de Sistema:** El Heartbeat FM1 indica una anomalía. Revise `Flag_Ready`.")
+
+        st.markdown("### 🎯 Estado de Flags Principales (Gauges)")
+        valid_gauge_flags = [flag for flag in MAIN_FLAGS if flag in df_display.columns and not df_display[flag].dropna().empty]
+        num_valid_gauges = len(valid_gauge_flags)
+        num_gauge_display_cols = min(4, num_valid_gauges) if num_valid_gauges > 0 else 0
+
+        if num_gauge_display_cols > 0:
+            gauge_cols = st.columns(num_gauge_display_cols)
+            gauges_displayed_count = 0
+            for i, flag_name in enumerate(valid_gauge_flags):
+                if gauges_displayed_count >= 8: break 
+                description = FLAG_DESCRIPTIONS.get(flag_name, flag_name)
+                if flag_name in PULSING_SIGNALS_FOR_GAUGE:
+                    gauge_value = OptibatMetricsAnalyzer.calculate_pulsing_gauge_value(df_display[flag_name])
+                else:
+                    gauge_value = df_display[flag_name].mean() * 100
+                with gauge_cols[gauges_displayed_count % num_gauge_display_cols]:
+                    fig_gauge = OptibatMetricsAnalyzer.create_gauge_chart(gauge_value, flag_name.replace("_"," "), description)
+                    st.plotly_chart(fig_gauge, use_container_width=True)
+                gauges_displayed_count +=1
+        elif uploaded_files: 
+            st.info("No hay datos de flags para gauges en el rango seleccionado.")
+
+        if "Date" in df_display.columns and not df_display["Date"].dropna().empty: 
+            st.markdown("### 📈 Línea de Tiempo del Sistema")
+            timeline_fig = OptibatMetricsAnalyzer.create_timeline_chart(df_display)
+            st.plotly_chart(timeline_fig, use_container_width=True)
+        elif uploaded_files: 
+            st.info("La columna 'Date' no está presente para generar la línea de tiempo.")
+        
+        # Raw data section
+        if show_raw_data:
+            st.markdown("### 📋 Datos Crudos")
+            with st.expander("Ver y filtrar datos completos", expanded=False):
+                base_raw_df = st.session_state.get('df_processed_global', pd.DataFrame())
+                
+                if not base_raw_df.empty and "Date" in base_raw_df.columns and not base_raw_df["Date"].dropna().empty:
+                    raw_min_date = base_raw_df["Date"].min().date()
+                    raw_max_date = base_raw_df["Date"].max().date()
+
+                    val_start_raw = raw_min_date
+                    val_end_raw = raw_max_date
+                    if date_range_main and len(date_range_main) == 2:
+                        val_start_raw = max(raw_min_date, date_range_main[0])
+                        val_end_raw = min(raw_max_date, date_range_main[1])
+
+                    raw_date_sel = st.date_input(
+                        "Filtrar datos crudos por fecha:",
+                        value=(val_start_raw, val_end_raw),
+                        min_value=raw_min_date,
+                        max_value=raw_max_date,
+                        format="DD/MM/YYYY",
+                        key="raw_data_date_selector"
+                    )
+                    if len(raw_date_sel) == 2:
+                        s_date_raw, e_date_raw = raw_date_sel
+                        mask_raw = (base_raw_df["Date"] >= pd.Timestamp(s_date_raw)) & \
+                                     (base_raw_df["Date"] <= pd.Timestamp(e_date_raw).replace(hour=23, minute=59, second=59))
+                        df_to_show_raw = base_raw_df[mask_raw]
+                    else:
+                        df_to_show_raw = pd.DataFrame()
+                elif not base_raw_df.empty:
+                    df_to_show_raw = base_raw_df
+                    st.info("No hay columna 'Date' en los datos crudos para filtrar por fecha.")
+                else:
+                    df_to_show_raw = pd.DataFrame()
+                    st.info("No hay datos cargados para mostrar como datos crudos.")
+
+                if not df_to_show_raw.empty:
+                    col1_raw_ui, col2_raw_ui = st.columns(2)
+                    with col1_raw_ui:
+                        all_cols_for_select = ['Date'] + MAIN_FLAGS + ['source_file'] if 'Date' in df_to_show_raw else MAIN_FLAGS + ['source_file']
+                        available_cols_for_select = [col for col in all_cols_for_select if col in df_to_show_raw.columns]
+                        default_raw_cols = [col for col in (['Date'] + MAIN_FLAGS[:3] if 'Date' in df_to_show_raw else MAIN_FLAGS[:3]) if col in available_cols_for_select]
+
+                        selected_cols_for_raw = st.multiselect(
+                            "Seleccionar columnas:",
+                            options=available_cols_for_select,
+                            default=default_raw_cols,
+                            key="raw_data_multiselect_cols"
+                        )
+                    with col2_raw_ui:
+                        rows_to_display_raw = st.slider("Número de filas:", 10, 1000, 100, key="raw_data_num_rows")
+                    
+                    if selected_cols_for_raw:
+                        st.dataframe(df_to_show_raw[selected_cols_for_raw].head(rows_to_display_raw), use_container_width=True, height=400)
+                    else:
+                        st.info("Seleccione columnas para mostrar.")
+
+        # Export results
+        if export_results:
+            st.markdown("### Exportar Resultados")
+            export_cols = st.columns(3)
+            
+            with export_cols[0]:
+                if not df_display.empty:
+                    csv = df_display.to_csv(index=False).encode('utf-8')
+                    st.download_button(
+                        label="📥 Descargar datos de gráficos (CSV)", data=csv,
+                        file_name=f"optibat_dashboard_data_{datetime.now().strftime('%Y%m%d_%H%M%S')}.csv", mime="text/csv"
+                    )
+                else:
+                    st.info("No hay datos en los gráficos para exportar.")
+            
+            with export_cols[1]:
+                kpis_json = json.dumps(kpis, indent=2, ensure_ascii=False).encode('utf-8')
+                st.download_button(
+                    label="📥 Descargar KPIs (JSON)", data=kpis_json,
+                    file_name=f"optibat_kpis_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json", mime="application/json"
+                )
+
+# =========================
+# SIMPLE AUTHENTICATION MODULE
+# =========================
+def check_authentication():
+    """Simple authentication using secrets or session state"""
+    
+    # Check if already authenticated
+    if st.session_state.get('authenticated', False):
+        return True, st.session_state.get('user_name', 'Usuario')
+    
+    # Default credentials for development  
+    default_users = {
+        "Administrador": {"password": "admin123", "name": "Administrador"},
+        "demo": {"password": "demo123", "name": "Usuario Demo"}
+    }
+    
+    users = default_users
+    
+    return False, users
+
+def show_simple_login():
+    """Show professional enterprise login form"""
+    
+    # Enterprise Header Section
+    st.markdown("""
+    <div style="text-align: center; padding: 4rem 2rem; background: linear-gradient(135deg, #E31E32 0%, #CC1A2C 100%); 
+                border-radius: 20px; margin-bottom: 3rem; color: white; box-shadow: 0 10px 30px rgba(0,0,0,0.1);">
+        <h1 style="font-size: 4rem; margin: 0; font-weight: 900; letter-spacing: 2px;">OPTIMITIVE</h1>
+        <div style="height: 4px; width: 80px; background: white; margin: 1.5rem auto; border-radius: 2px;"></div>
+        <h2 style="font-size: 1.8rem; margin: 0; font-weight: 300; opacity: 0.95;">OPTIBAT Maintenance Tool</h2>
+        <p style="margin: 1.5rem 0 0 0; opacity: 0.85; font-size: 1.1rem; max-width: 600px; margin-left: auto; margin-right: auto;">
+            Sistema profesional de análisis y mantenimiento para monitoreo industrial avanzado
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Professional Login Form Section
+    st.markdown("""
+    <div style="text-align: center; margin-bottom: 2rem;">
+        <h2 style="color: #2C3E50; font-size: 2.2rem; font-weight: 600; margin: 0;">Control de Acceso</h2>
+        <p style="color: #6C757D; font-size: 1.1rem; margin: 0.5rem 0 0 0;">Ingrese sus credenciales para acceder al sistema</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Enhanced CSS for professional form styling
+    st.markdown("""
+    <style>
+    .login-form .stTextInput > div > div > input {
+        padding: 1.2rem 1.5rem !important;
+        font-size: 1.1rem !important;
+        border: 2px solid #E1E5E9 !important;
+        border-radius: 12px !important;
+        background: #FFFFFF !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.05) !important;
+        transition: all 0.3s ease !important;
+    }
+    .login-form .stTextInput > div > div > input:focus {
+        border-color: #E31E32 !important;
+        box-shadow: 0 0 0 3px rgba(227, 30, 50, 0.1), 0 4px 12px rgba(0,0,0,0.1) !important;
+        background: #FFFFFF !important;
+    }
+    .login-form .stTextInput label {
+        font-size: 1rem !important;
+        font-weight: 600 !important;
+        color: #2C3E50 !important;
+        margin-bottom: 0.5rem !important;
+    }
+    .login-form .stButton > button {
+        background: linear-gradient(135deg, #E31E32 0%, #CC1A2C 100%) !important;
+        color: white !important;
+        border: none !important;
+        border-radius: 12px !important;
+        padding: 1rem 2.5rem !important;
+        font-size: 1.1rem !important;
+        font-weight: 600 !important;
+        width: 100% !important;
+        box-shadow: 0 4px 15px rgba(227, 30, 50, 0.3) !important;
+        transition: all 0.3s ease !important;
+        margin-top: 1rem !important;
+    }
+    .login-form .stButton > button:hover {
+        background: linear-gradient(135deg, #CC1A2C 0%, #B71C1C 100%) !important;
+        box-shadow: 0 6px 20px rgba(227, 30, 50, 0.4) !important;
+        transform: translateY(-1px) !important;
+    }
+    .professional-card {
+        background: white;
+        padding: 3rem 2.5rem;
+        border-radius: 20px;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.08);
+        border: 1px solid #F0F2F5;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+    
+    # Professional Login Card
+    col1, col2, col3 = st.columns([1, 3, 1])
+    
+    with col2:
+        st.markdown('<div class="professional-card">', unsafe_allow_html=True)
+        
+        with st.container():
+            st.markdown('<div class="login-form">', unsafe_allow_html=True)
+            
+            with st.form("login_form"):
+                username = st.text_input("Usuario", placeholder="Ingrese su nombre de usuario")
+                password = st.text_input("Contraseña", type="password", placeholder="Ingrese su contraseña")
+                submit = st.form_submit_button("Acceder al Sistema")
+                
+                if submit:
+                    authenticated, users = check_authentication()
+                    
+                    if username in users and users[username]["password"] == password:
+                        st.session_state['authenticated'] = True
+                        st.session_state['user_name'] = users[username]["name"]
+                        st.session_state['username'] = username
+                        st.success("Acceso autorizado. Iniciando sistema...")
+                        st.rerun()
+                    else:
+                        st.error("Credenciales incorrectas. Verifique usuario y contraseña.")
+            
+            st.markdown('</div>', unsafe_allow_html=True)
+        
+        st.markdown('</div>', unsafe_allow_html=True)
+    
+    # Professional Help Section
+    st.markdown("<br>", unsafe_allow_html=True)
+    with st.expander("Información del Sistema"):
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            **Acceso al Sistema:**
+            - Credenciales proporcionadas por administración
+            - Acceso seguro con autenticación empresarial
+            - Sesiones controladas y monitoreadas
+            """)
+        
+        with col2:
+            st.markdown("""
+            **Capacidades del Sistema:**
+            - Análisis avanzado de flags industriales
+            - Generación de reportes ejecutivos
+            - Monitoreo en tiempo real de sistemas OPTIBAT
+            - Exportación de datos en formatos estándar
+            """)
+
+# =========================
+# LOCAL FILE BROWSER FUNCTIONS
+# =========================
+def show_local_file_browser():
+    """Show local file browser for uploading files from PC"""
+    
+    st.markdown(f"""
+    <div style="background: {OPTIMITIVE_COLORS['accent_blue']}; color: white; padding: 1.5rem; border-radius: 15px; margin-bottom: 2rem;">
+        <h3 style="margin: 0; display: flex; align-items: center;">
+            📁 Archivos Locales
+        </h3>
+        <p style="margin: 0.5rem 0 0 0;">
+            Seleccione archivos .osf y .txt de su computadora para analizar.
+        </p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Check if global files are loaded
+    global_files_data = st.session_state.get('global_files_data', None)
+    
+    if not global_files_data:
+        st.info("👈 **Usa el cargador global en la barra lateral** para alimentar este generador con archivos .osf y .txt")
+        return
+    
+    # Show loaded files from global data
+    st.markdown("### 📁 Archivos Cargados Globalmente")
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("#### 📄 Archivos SampleFiles (.osf)")
+        sample_files = global_files_data.get("SampleFiles", [])
+        if sample_files:
+            st.success(f"✅ {len(sample_files)} archivo(s) .osf cargado(s)")
+            for file_name, _ in sample_files:
+                st.write(f"📄 {file_name}")
+        else:
+            st.info("No hay archivos .osf cargados")
+    
+    with col2:
+        st.markdown("#### 📊 Archivos Statistics (.txt)")
+        stats_files = global_files_data.get("Statistics", [])
+        if stats_files:
+            st.success(f"✅ {len(stats_files)} archivo(s) .txt cargado(s)")
+            for file_name, _ in stats_files:
+                st.write(f"📊 {file_name}")
+        else:
+            st.info("No hay archivos .txt cargados")
+    
+    # Analysis section
+    if sample_files or stats_files:
+        st.markdown("---")
+        st.markdown("### ⚙️ Configuración del Análisis")
+        
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            project_type = st.selectbox(
+                "Tipo de Proyecto",
+                ["Auto", "CEMEX", "RCC"],
+                help="Auto detectará el tipo basándose en las columnas del archivo",
+                key="local_project_type"
+            )
+        
+        with col2:
+            month_name = st.text_input(
+                "Nombre del Reporte",
+                value="Análisis-Local",
+                help="Este nombre aparecerá en el reporte"
+            )
+        
+        notes = st.text_area(
+            "Notas adicionales (opcional)",
+            placeholder="Agregue cualquier observación relevante para este reporte...",
+            height=100
+        )
+        
+        # Analysis button
+        if st.button("🚀 Ejecutar Análisis", type="primary", use_container_width=True):
+            analyze_global_files(global_files_data, project_type, month_name, notes)
+    
+    else:
+        st.info("👆 No hay datos globales cargados para analizar")
+    
+    # Back to main page
+    st.markdown("---")
+    if st.button("🏠 Volver al Inicio", use_container_width=True):
+        if 'local_mode' in st.session_state:
+            del st.session_state['local_mode']
+        st.rerun()
+
+def analyze_local_files(sample_files, stats_files, project_type, month_name, notes):
+    """Analyze uploaded local files - LEGACY FUNCTION"""
+    
+    with st.spinner("Analizando archivos locales..."):
+        try:
+            # Organize files data
+            files_data = {"SampleFiles": [], "Statistics": []}
+            
+            # Process sample files
+            if sample_files:
+                for file in sample_files:
+                    content = file.read()
+                    files_data["SampleFiles"].append((file.name, content))
+            
+            # Process statistics files
+            if stats_files:
+                for file in stats_files:
+                    content = file.read()
+                    files_data["Statistics"].append((file.name, content))
+            
+            # Analyze files
+            df_analysis = analyze_files(files_data, project_type)
+            
+            if df_analysis.empty:
+                st.warning("⚠️ No se encontraron datos para analizar en los archivos")
+                return
+            
+            # Generate statistics
+            stats = generate_summary_stats(df_analysis)
+            
+            # Display results
+            st.markdown("### 📈 Resultados del Análisis")
+            
+            # KPIs
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Archivos Analizados", stats['total_files'])
+            
+            with col2:
+                st.metric("Flags Evaluadas", stats['total_flags'])
+            
+            with col3:
+                st.metric("Cobertura Total", f"{stats['coverage_pct']}%")
+            
+            # Create visualizations
+            charts = create_visualizations(stats)
+            
+            # Display charts
+            if "flags" in charts:
+                st.plotly_chart(charts["flags"], use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if "files" in charts:
+                    st.plotly_chart(charts["files"], use_container_width=True)
+            
+            with col2:
+                if "category" in charts:
+                    st.plotly_chart(charts["category"], use_container_width=True)
+            
+            # Generate and display HTML report
+            html_content = generate_html_report(
+                df_analysis, stats, charts, 
+                month_name, project_type, notes
+            )
+            
+            # Download button for HTML
+            st.download_button(
+                label="📥 Descargar Reporte HTML",
+                data=html_content,
+                file_name=f"reporte_{month_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+        
+        except Exception as e:
+            st.error(f"❌ Error durante el análisis: {str(e)}")
+            st.exception(e)
+
+def analyze_global_files(global_files_data, project_type, month_name, notes):
+    """Analyze files from global storage"""
+    
+    with st.spinner("Analizando archivos desde carga global..."):
+        try:
+            # Use the global files data directly
+            df_analysis = analyze_files(global_files_data, project_type)
+            
+            if df_analysis.empty:
+                st.warning("⚠️ No se encontraron datos para analizar en los archivos")
+                return
+            
+            # Generate statistics
+            stats = generate_summary_stats(df_analysis)
+            
+            # Display results
+            st.markdown("### 📈 Resultados del Análisis")
+            
+            # KPIs
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                st.metric("Archivos Analizados", stats['total_files'])
+            
+            with col2:
+                st.metric("Flags Evaluadas", stats['total_flags'])
+            
+            with col3:
+                st.metric("Cobertura Total", f"{stats['coverage_pct']}%")
+            
+            # Create visualizations
+            charts = create_visualizations(stats)
+            
+            # Display charts
+            if "flags" in charts:
+                st.plotly_chart(charts["flags"], use_container_width=True)
+            
+            col1, col2 = st.columns(2)
+            
+            with col1:
+                if "files" in charts:
+                    st.plotly_chart(charts["files"], use_container_width=True)
+            
+            with col2:
+                if "category" in charts:
+                    st.plotly_chart(charts["category"], use_container_width=True)
+            
+            # Generate and display HTML report
+            html_content = generate_html_report(
+                df_analysis, stats, charts, 
+                month_name, project_type, notes
+            )
+            
+            # Download button for HTML
+            st.download_button(
+                label="📥 Descargar Reporte HTML",
+                data=html_content,
+                file_name=f"reporte_{month_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html",
+                mime="text/html",
+                use_container_width=True
+            )
+            
+            # Detailed tables
+            with st.expander("📋 Resumen por Flag", expanded=False):
+                st.dataframe(
+                    stats["by_flag"],
+                    use_container_width=True,
+                    hide_index=True
+                )
+            
+            with st.expander("📁 Resumen por Archivo", expanded=False):
+                st.dataframe(
+                    stats["by_file"],
+                    use_container_width=True,
+                    hide_index=True
+                )
+        
+        except Exception as e:
+            st.error(f"❌ Error durante el análisis: {str(e)}")
+            st.exception(e)
+
+# =========================
+# SHAREPOINT / GRAPH CLIENT
+# =========================
+class GraphClient:
+    """Microsoft Graph API Client for SharePoint access"""
+    
+    def __init__(self, tenant: str, client_id: str, client_secret: str):
+        self.tenant = tenant
+        self.client_id = client_id
+        self.client_secret = client_secret
+        self.scope = ["https://graph.microsoft.com/.default"]
+        self.app = msal.ConfidentialClientApplication(
+            client_id=self.client_id,
+            client_credential=self.client_secret,
+            authority=f"https://login.microsoftonline.com/{self.tenant}"
+        )
+        self._token = None
+        self._token_expiry = 0
+    
+    def get_token(self) -> str:
+        """Get or refresh access token"""
+        current_time = time.time()
+        
+        # Check if token is still valid (with 5 min buffer)
+        if self._token and self._token_expiry - current_time > 300:
+            return self._token
+        
+        # Try to get token silently first
+        result = self.app.acquire_token_silent(self.scope, account=None)
+        
+        # If no cached token, get new one
+        if not result:
+            result = self.app.acquire_token_for_client(scopes=self.scope)
+        
+        if "access_token" not in result:
+            error_msg = result.get("error_description", "Unknown error")
+            raise RuntimeError(f"Failed to acquire Graph token: {error_msg}")
+        
+        # Cache token and expiry
+        self._token = result["access_token"]
+        self._token_expiry = current_time + result.get("expires_in", 3600)
+        
+        return self._token
+    
+    def make_request(self, url: str, params: Dict[str, Any] = None) -> Dict[str, Any]:
+        """Make authenticated GET request to Graph API"""
+        headers = {
+            "Authorization": f"Bearer {self.get_token()}",
+            "Accept": "application/json"
+        }
+        
+        response = requests.get(url, headers=headers, params=params, timeout=30)
+        response.raise_for_status()
+        return response.json()
+    
+    def download_content(self, url: str) -> bytes:
+        """Download file content from Graph API"""
+        headers = {
+            "Authorization": f"Bearer {self.get_token()}"
+        }
+        
+        response = requests.get(url, headers=headers, timeout=120)
+        response.raise_for_status()
+        return response.content
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def get_site_and_drive(gc, hostname: str, site_path: str, drive_name: str) -> Tuple[str, str]:
+    """Resolve SharePoint site and drive IDs"""
+    
+    # Get site ID
+    site_url = f"https://graph.microsoft.com/v1.0/sites/{hostname}:/{site_path}"
+    site_info = gc.make_request(site_url)
+    site_id = site_info["id"]
+    
+    # Get drives
+    drives_url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drives"
+    drives_info = gc.make_request(drives_url)
+    
+    # Find matching drive
+    for drive in drives_info.get("value", []):
+        if drive.get("name") == drive_name:
+            return site_id, drive["id"]
+    
+    raise ValueError(f"Drive '{drive_name}' not found in site")
+
+def list_folder_contents(gc, drive_id: str, folder_path: str) -> List[Dict[str, Any]]:
+    """List contents of a SharePoint folder"""
+    
+    # Clean path
+    folder_path = folder_path.strip("/")
+    
+    if folder_path:
+        url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{folder_path}:/children"
+    else:
+        url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root/children"
+    
+    # Get all pages (handle pagination)
+    items = []
+    while url:
+        data = gc.make_request(url)
+        items.extend(data.get("value", []))
+        url = data.get("@odata.nextLink")
+    
+    return items
+
+def download_file(gc, drive_id: str, file_path: str) -> bytes:
+    """Download a file from SharePoint"""
+    
+    file_path = file_path.strip("/")
+    url = f"https://graph.microsoft.com/v1.0/drives/{drive_id}/root:/{file_path}:/content"
+    return gc.download_content(url)
+
+# =========================
+# FLAGS ANALYSIS MODULE
+# =========================
+FLAG_DEFINITIONS = {
+    "CEMEX": [
+        "OPTIBAT_ON",
+        "Flag_Ready",
+        "Communication_ECS",
+        "Support_Flag_Copy",
+        "Macrostates_Flag_Copy",
+        "Resultexistance_Flag_Copy",
+        "OPTIBAT_WATCHDOG"
+    ],
+    "RCC": [
+        "OPTIBAT_ON",
+        "MacroState_flag",
+        "Support",
+        "ResulExistance_Quality_flag",
+        "OPTIBAT_COMMUNICATION"
+    ]
+}
+
+def parse_header_line(line: str) -> List[str]:
+    """Parse header line with multiple possible delimiters"""
+    line = line.strip().strip("\ufeff")
+    
+    # Try tab delimiter first
+    if "\t" in line:
+        columns = line.split("\t")
+    else:
+        # Try multiple spaces
+        columns = re.split(r"\s{2,}", line)
+    
+    # Clean column names
+    return [col.strip().strip('"').strip("'") for col in columns if col.strip()]
+
+def extract_varname_header(content: bytes) -> List[str]:
+    """Extract VarName header from file content"""
+    try:
+        text = content.decode("utf-8-sig", errors="replace")
+        lines = text.splitlines()
+        
+        for line in lines[:100]:  # Check first 100 lines
+            clean_line = line.strip()
+            if clean_line.lower().startswith("varname"):
+                return parse_header_line(clean_line)
+        
+        return []
+    except Exception as e:
+        st.warning(f"Error parsing header: {e}")
+        return []
+
+def detect_project_type(header: List[str]) -> Optional[str]:
+    """Auto-detect project type from header columns"""
+    if not header:
+        return None
+    
+    header_lower = {col.lower() for col in header}
+    
+    # Check for CEMEX-specific columns
+    cemex_indicators = {
+        "flag_ready", "communication_ecs", "support_flag_copy",
+        "macrostates_flag_copy", "resultexistance_flag_copy"
+    }
+    
+    # Check for RCC-specific columns
+    rcc_indicators = {
+        "macrostate_flag", "support", "resulexistance_quality_flag",
+        "optibat_communication"
+    }
+    
+    cemex_matches = len(cemex_indicators & header_lower)
+    rcc_matches = len(rcc_indicators & header_lower)
+    
+    if cemex_matches > rcc_matches:
+        return "CEMEX"
+    elif rcc_matches > 0:
+        return "RCC"
+    
+    return None
+
+def find_flag_column(header: List[str], flag_name: str) -> int:
+    """Find column index for a specific flag"""
+    flag_lower = flag_name.lower()
+    
+    for idx, col in enumerate(header):
+        if col.strip().lower() == flag_lower:
+            return idx
+    
+    return -1
+
+def analyze_files(files_data: Dict[str, List[Tuple[str, bytes]]], 
+                  project_type: str = "Auto") -> pd.DataFrame:
+    """Analyze files for flag presence and positions"""
+    
+    results = []
+    detected_project = None
+    
+    # Auto-detect project if needed
+    if project_type == "Auto":
+        for category, files in files_data.items():
+            if files and not detected_project:
+                _, content = files[0]
+                header = extract_varname_header(content)
+                detected_project = detect_project_type(header)
+        
+        if not detected_project:
+            detected_project = "CEMEX"  # Default fallback
+    else:
+        detected_project = project_type
+    
+    # Get flag list for project
+    flags = FLAG_DEFINITIONS.get(detected_project, FLAG_DEFINITIONS["CEMEX"])
+    
+    # Analyze each file
+    for category, files in files_data.items():
+        for filename, content in files:
+            header = extract_varname_header(content)
+            
+            for flag in flags:
+                col_idx = find_flag_column(header, flag) if header else -1
+                
+                results.append({
+                    "Category": category,
+                    "File": filename,
+                    "Flag": flag,
+                    "Column Index": col_idx if col_idx >= 0 else "",
+                    "Found": col_idx >= 0,
+                    "Project": detected_project
+                })
+    
+    return pd.DataFrame(results)
+
+# =========================
+# FILE BROWSER UI
+# =========================
+def render_breadcrumb(path_parts: List[str]):
+    """Render breadcrumb navigation"""
+    
+    breadcrumb_html = '<div class="breadcrumb">'
+    
+    # Root
+    breadcrumb_html += '<a href="#" onclick="return false;">🏠 Root</a>'
+    
+    # Path parts
+    for i, part in enumerate(path_parts):
+        breadcrumb_html += '<span class="separator">/</span>'
+        breadcrumb_html += f'<a href="#" onclick="return false;">{part}</a>'
+    
+    breadcrumb_html += '</div>'
+    
+    st.markdown(breadcrumb_html, unsafe_allow_html=True)
+    
+    # Handle navigation with buttons
+    cols = st.columns(len(path_parts) + 1)
+    
+    with cols[0]:
+        if st.button("🏠", key="nav_root", help="Go to root"):
+            st.session_state.current_path = []
+            st.rerun()
+    
+    for i, part in enumerate(path_parts):
+        with cols[i + 1]:
+            if st.button(f"📁 {part[:10]}..." if len(part) > 10 else f"📁 {part}", 
+                        key=f"nav_{i}", help=f"Go to {part}"):
+                st.session_state.current_path = path_parts[:i + 1]
+                st.rerun()
+
+def render_file_browser(gc, drive_id: str):
+    """Render SharePoint file browser"""
+    
+    if "current_path" not in st.session_state:
+        st.session_state.current_path = []
+    
+    current_path = "/".join(st.session_state.current_path)
+    
+    # Render breadcrumb
+    render_breadcrumb(st.session_state.current_path)
+    
+    # Get folder contents
+    with st.spinner("Loading SharePoint contents..."):
+        items = list_folder_contents(gc, drive_id, current_path)
+    
+    # Separate folders and files
+    folders = [item for item in items if item.get("folder")]
+    files = [item for item in items if item.get("file")]
+    
+    # Sort by name
+    folders.sort(key=lambda x: x["name"].lower())
+    files.sort(key=lambda x: x["name"].lower())
+    
+    # Display in columns
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📁 Folders")
+        
+        if not folders:
+            st.info("No subfolders in this location")
+        else:
+            for folder in folders:
+                folder_name = folder["name"]
+                
+                # Format folder info
+                modified = folder.get("lastModifiedDateTime", "")
+                if modified:
+                    modified = datetime.fromisoformat(modified.replace("Z", "+00:00"))
+                    modified_str = modified.strftime("%Y-%m-%d %H:%M")
+                else:
+                    modified_str = "Unknown"
+                
+                if st.button(
+                    f"📁 {folder_name}",
+                    key=f"folder_{folder['id']}",
+                    help=f"Modified: {modified_str}",
+                    use_container_width=True
+                ):
+                    st.session_state.current_path.append(folder_name)
+                    st.rerun()
+    
+    with col2:
+        st.markdown("### 📄 Files")
+        
+        if not files:
+            st.info("No files in this folder")
+        else:
+            # Create dataframe for files
+            files_data = []
+            for file in files:
+                size_kb = file.get("size", 0) / 1024
+                modified = file.get("lastModifiedDateTime", "")
+                if modified:
+                    modified = datetime.fromisoformat(modified.replace("Z", "+00:00"))
+                    modified_str = modified.strftime("%Y-%m-%d")
+                else:
+                    modified_str = ""
+                
+                files_data.append({
+                    "Name": file["name"],
+                    "Size (KB)": f"{size_kb:.1f}",
+                    "Modified": modified_str
+                })
+            
+            df_files = pd.DataFrame(files_data)
+            st.dataframe(df_files, use_container_width=True, height=300)
+    
+    # Selection button
+    st.markdown("---")
+    
+    if st.button(
+        "✅ Use This Folder for Analysis",
+        key="select_folder",
+        type="primary",
+        use_container_width=True
+    ):
+        st.session_state.selected_folder = current_path
+        return True
+    
+    return False
+
+# =========================
+# REPORT GENERATION
+# =========================
+def generate_summary_stats(df_analysis: pd.DataFrame) -> Dict[str, Any]:
+    """Generate summary statistics from analysis"""
+    
+    if df_analysis.empty:
+        return {
+            "total_files": 0,
+            "total_flags": 0,
+            "coverage_pct": 0,
+            "by_flag": pd.DataFrame(),
+            "by_file": pd.DataFrame(),
+            "by_category": pd.DataFrame()
+        }
+    
+    # Overall stats
+    total_files = df_analysis["File"].nunique()
+    total_flags = df_analysis["Flag"].nunique()
+    coverage_pct = df_analysis["Found"].mean() * 100
+    
+    # By flag
+    by_flag = df_analysis.groupby("Flag").agg({
+        "Found": ["sum", "count", lambda x: x.mean() * 100]
+    }).round(1)
+    by_flag.columns = ["Files Found", "Total Files", "Coverage %"]
+    by_flag = by_flag.reset_index()
+    
+    # By file
+    by_file = df_analysis.groupby("File").agg({
+        "Found": ["sum", "count", lambda x: x.mean() * 100]
+    }).round(1)
+    by_file.columns = ["Flags Found", "Total Flags", "Coverage %"]
+    by_file = by_file.reset_index()
+    
+    # By category
+    by_category = df_analysis.groupby("Category").agg({
+        "Found": ["sum", "count", lambda x: x.mean() * 100]
+    }).round(1)
+    by_category.columns = ["Flags Found", "Total Checks", "Coverage %"]
+    by_category = by_category.reset_index()
+    
+    return {
+        "total_files": total_files,
+        "total_flags": total_flags,
+        "coverage_pct": round(coverage_pct, 1),
+        "by_flag": by_flag,
+        "by_file": by_file,
+        "by_category": by_category
+    }
+
+def create_visualizations(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """Create Plotly visualizations for the report"""
+    
+    charts = {}
+    
+    # Flag coverage chart
+    if not stats["by_flag"].empty:
+        fig_flags = px.bar(
+            stats["by_flag"].sort_values("Coverage %", ascending=True),
+            x="Coverage %",
+            y="Flag",
+            orientation="h",
+            title="Flag Coverage Analysis",
+            color="Coverage %",
+            color_continuous_scale=["#FF3366", "#FFB800", "#00CC66"],
+            range_color=[0, 100]
+        )
+        
+        fig_flags.update_layout(
+            height=400,
+            showlegend=False,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font_color='white',
+            title_font_size=18,
+            xaxis=dict(range=[0, 105])
+        )
+        
+        charts["flags"] = fig_flags
+    
+    # File coverage distribution
+    if not stats["by_file"].empty:
+        fig_files = px.histogram(
+            stats["by_file"],
+            x="Coverage %",
+            nbins=20,
+            title="File Coverage Distribution",
+            labels={"count": "Number of Files", "Coverage %": "Coverage Percentage"},
+            color_discrete_sequence=[OPTIMITIVE_COLORS['accent_blue']]
+        )
+        
+        fig_files.update_layout(
+            height=350,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font_color='white',
+            title_font_size=18
+        )
+        
+        charts["files"] = fig_files
+    
+    # Category comparison
+    if not stats["by_category"].empty:
+        fig_category = go.Figure(data=[
+            go.Bar(
+                name='Flags Found',
+                x=stats["by_category"]["Category"],
+                y=stats["by_category"]["Flags Found"],
+                marker_color=OPTIMITIVE_COLORS['success']
+            ),
+            go.Bar(
+                name='Missing',
+                x=stats["by_category"]["Category"],
+                y=stats["by_category"]["Total Checks"] - stats["by_category"]["Flags Found"],
+                marker_color=OPTIMITIVE_COLORS['error']
+            )
+        ])
+        
+        fig_category.update_layout(
+            barmode='stack',
+            title="Coverage by Category",
+            height=350,
+            plot_bgcolor='rgba(0,0,0,0)',
+            paper_bgcolor='rgba(0,0,0,0)',
+            font_color='white',
+            title_font_size=18,
+            xaxis_title="Category",
+            yaxis_title="Number of Checks"
+        )
+        
+        charts["category"] = fig_category
+    
+    return charts
+
+def generate_html_report(
+    month_name: str,
+    project: str,
+    stats: Dict[str, Any],
+    df_analysis: pd.DataFrame,
+    notes: str = ""
+) -> str:
+    """Generate HTML report"""
+    
+    # Convert dataframes to HTML
+    def df_to_html(df: pd.DataFrame, max_rows: int = 100) -> str:
+        if df.empty:
+            return "<p>No data available</p>"
+        
+        # Limit rows for large datasets
+        if len(df) > max_rows:
+            df = df.head(max_rows)
+            html = df.to_html(index=False, classes="data-table")
+            html += f"<p><em>Showing first {max_rows} of {len(df)} rows</em></p>"
+        else:
+            html = df.to_html(index=False, classes="data-table")
+        
+        return html
+    
+    # Generate report sections
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    
+    html_template = f"""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
+        <title>Monthly Report - {month_name} - {project}</title>
+        <style>
+            * {{
+                margin: 0;
+                padding: 0;
+                box-sizing: border-box;
+            }}
+            
+            body {{
+                font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+                background: linear-gradient(135deg, #0A0A0A 0%, #1A1A1A 100%);
+                color: #FFFFFF;
+                line-height: 1.6;
+            }}
+            
+            .container {{
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 2rem;
+            }}
+            
+            .header {{
+                background: linear-gradient(90deg, #E31E32 0%, #CC1A2C 100%);
+                padding: 3rem 2rem;
+                border-radius: 15px;
+                text-align: center;
+                margin-bottom: 2rem;
+                box-shadow: 0 8px 32px rgba(227, 30, 50, 0.3);
+            }}
+            
+            .header h1 {{
+                font-size: 2.5rem;
+                margin-bottom: 0.5rem;
+                text-shadow: 2px 2px 4px rgba(0,0,0,0.3);
+            }}
+            
+            .header .subtitle {{
+                font-size: 1.2rem;
+                opacity: 0.9;
+            }}
+            
+            .header .timestamp {{
+                font-size: 0.9rem;
+                opacity: 0.7;
+                margin-top: 1rem;
+            }}
+            
+            .kpi-container {{
+                display: grid;
+                grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+                gap: 1.5rem;
+                margin: 2rem 0;
+            }}
+            
+            .kpi-card {{
+                background: linear-gradient(135deg, #1A1A1A 0%, #2A2A2A 100%);
+                padding: 1.5rem;
+                border-radius: 15px;
+                border-left: 5px solid #E31E32;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            }}
+            
+            .kpi-card .label {{
+                color: #CCCCCC;
+                font-size: 0.9rem;
+                text-transform: uppercase;
+                letter-spacing: 1px;
+                margin-bottom: 0.5rem;
+            }}
+            
+            .kpi-card .value {{
+                font-size: 2rem;
+                font-weight: 700;
+                color: #FFFFFF;
+            }}
+            
+            .kpi-card.success .value {{
+                color: #00CC66;
+            }}
+            
+            .kpi-card.warning .value {{
+                color: #FFB800;
+            }}
+            
+            .kpi-card.danger .value {{
+                color: #FF3366;
+            }}
+            
+            .section {{
+                background: #1A1A1A;
+                border-radius: 15px;
+                padding: 2rem;
+                margin: 2rem 0;
+                box-shadow: 0 4px 15px rgba(0,0,0,0.2);
+            }}
+            
+            .section h2 {{
+                color: #E31E32;
+                margin-bottom: 1.5rem;
+                font-size: 1.8rem;
+                border-bottom: 2px solid #E31E32;
+                padding-bottom: 0.5rem;
+            }}
+            
+            .section h3 {{
+                color: #0099CC;
+                margin: 1.5rem 0 1rem 0;
+                font-size: 1.3rem;
+            }}
+            
+            .data-table {{
+                width: 100%;
+                border-collapse: collapse;
+                margin: 1rem 0;
+                background: #0A0A0A;
+                border-radius: 10px;
+                overflow: hidden;
+            }}
+            
+            .data-table th {{
+                background: #E31E32;
+                color: white;
+                padding: 12px;
+                text-align: left;
+                font-weight: 600;
+            }}
+            
+            .data-table td {{
+                padding: 10px 12px;
+                border-bottom: 1px solid #2A2A2A;
+            }}
+            
+            .data-table tr:hover {{
+                background: #2A2A2A;
+            }}
+            
+            .data-table tr:nth-child(even) {{
+                background: #1A1A1A;
+            }}
+            
+            .notes {{
+                background: linear-gradient(135deg, #0099CC 0%, #007AA3 100%);
+                padding: 1.5rem;
+                border-radius: 10px;
+                margin: 2rem 0;
+            }}
+            
+            .footer {{
+                text-align: center;
+                padding: 2rem;
+                color: #CCCCCC;
+                border-top: 2px solid #E31E32;
+                margin-top: 3rem;
+            }}
+            
+            .footer a {{
+                color: #E31E32;
+                text-decoration: none;
+            }}
+            
+            .success-badge {{
+                background: #00CC66;
+                color: white;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 0.9rem;
+            }}
+            
+            .error-badge {{
+                background: #FF3366;
+                color: white;
+                padding: 4px 8px;
+                border-radius: 4px;
+                font-size: 0.9rem;
+            }}
+            
+            @media print {{
+                body {{
+                    background: white;
+                    color: black;
+                }}
+                
+                .header, .kpi-card, .section {{
+                    box-shadow: none;
+                    border: 1px solid #ddd;
+                }}
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <div class="header">
+                <h1>📊 Monthly Report - {month_name}</h1>
+                <div class="subtitle">Project: {project}</div>
+                <div class="timestamp">Generated: {timestamp}</div>
+            </div>
+            
+            <div class="kpi-container">
+                <div class="kpi-card">
+                    <div class="label">Total Files Analyzed</div>
+                    <div class="value">{stats['total_files']}</div>
+                </div>
+                
+                <div class="kpi-card">
+                    <div class="label">Total Flags Checked</div>
+                    <div class="value">{stats['total_flags']}</div>
+                </div>
+                
+                <div class="kpi-card {'success' if stats['coverage_pct'] >= 80 else 'warning' if stats['coverage_pct'] >= 60 else 'danger'}">
+                    <div class="label">Overall Coverage</div>
+                    <div class="value">{stats['coverage_pct']}%</div>
+                </div>
+            </div>
+            
+            <div class="section">
+                <h2>📋 Flag Coverage Summary</h2>
+                {df_to_html(stats['by_flag'])}
+            </div>
+            
+            <div class="section">
+                <h2>📁 File Coverage Summary</h2>
+                {df_to_html(stats['by_file'])}
+            </div>
+            
+            <div class="section">
+                <h2>📊 Category Analysis</h2>
+                {df_to_html(stats['by_category'])}
+            </div>
+            
+            <div class="section">
+                <h2>🔍 Detailed Analysis</h2>
+                {df_to_html(df_analysis)}
+            </div>
+            
+            {f'<div class="notes"><h3>📝 Notes</h3><p>{notes}</p></div>' if notes else ''}
+            
+            <div class="footer">
+                <p><strong>Optimitive Monthly Report Generator</strong></p>
+                <p>Developed by Juan Cruz E. | Powered by <a href="https://optimitive.com">Optimitive</a></p>
+                <p>© 2024 Optimitive - AI Optimization Solutions</p>
+            </div>
+        </div>
+    </body>
+    </html>
+    """
+    
+    return html_template
+
+# =========================
+# LOGIN PAGE UI
+# =========================
+def show_professional_login_page():
+    """Display professional landing/login page"""
+    
+    # Hero Section
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, {OPTIMITIVE_COLORS['primary_red']} 0%, #8B0A1A 50%, #000000 100%);
+                padding: 4rem 2rem; border-radius: 25px; text-align: center; margin-bottom: 2rem;
+                box-shadow: 0 20px 60px rgba(227, 30, 50, 0.4); position: relative; overflow: hidden;">
+        
+        <!-- Background Pattern -->
+        <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; 
+                    background: url('data:image/svg+xml,<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 100 100\"><defs><pattern id=\"grid\" width=\"10\" height=\"10\" patternUnits=\"userSpaceOnUse\"><path d=\"M 10 0 L 0 0 0 10\" fill=\"none\" stroke=\"%23ffffff\" stroke-width=\"0.5\" opacity=\"0.1\"/></pattern></defs><rect width=\"100\" height=\"100\" fill=\"url(%23grid)\"/></svg>'); opacity: 0.3;">
+        </div>
+        
+        <!-- Content -->
+        <div style="position: relative; z-index: 2;">
+            <h1 style="margin: 0; font-size: 4rem; font-weight: 900; color: white; 
+                       text-shadow: 3px 3px 10px rgba(0,0,0,0.7); letter-spacing: 3px;">
+                🚀 OPTIMITIVE
+            </h1>
+            <div style="height: 4px; width: 100px; background: white; margin: 1rem auto; border-radius: 2px;"></div>
+            <h2 style="margin: 1rem 0; font-size: 1.8rem; color: white; font-weight: 300; opacity: 0.95;">
+                Monthly Report Generator
+            </h2>
+            <p style="font-size: 1.1rem; color: white; opacity: 0.85; max-width: 600px; margin: 1rem auto; line-height: 1.6;">
+                Professional SharePoint Integration & Advanced Flag Analysis Tool
+            </p>
+            <div style="margin-top: 2rem;">
+                <span style="background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 25px; 
+                           color: white; font-size: 0.9rem; margin: 0 0.5rem;">
+                    📊 Analytics
+                </span>
+                <span style="background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 25px; 
+                           color: white; font-size: 0.9rem; margin: 0 0.5rem;">
+                    🔗 SharePoint
+                </span>
+                <span style="background: rgba(255,255,255,0.2); padding: 0.5rem 1rem; border-radius: 25px; 
+                           color: white; font-size: 0.9rem; margin: 0 0.5rem;">
+                    📈 Reports
+                </span>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    # Main Login Section
+    col1, col2, col3 = st.columns([1, 2, 1])
+    
+    with col2:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {OPTIMITIVE_COLORS['medium_bg']} 0%, {OPTIMITIVE_COLORS['light_bg']} 100%);
+                    padding: 3rem; border-radius: 25px; box-shadow: 0 15px 40px rgba(0,0,0,0.5);
+                    border: 1px solid {OPTIMITIVE_COLORS['primary_red']}44; position: relative;">
+            
+            <!-- Login Header -->
+            <div style="text-align: center; margin-bottom: 2rem;">
+                <div style="display: inline-block; background: linear-gradient(135deg, {OPTIMITIVE_COLORS['primary_red']} 0%, #CC1A2C 100%);
+                           padding: 1rem 2rem; border-radius: 15px; margin-bottom: 1rem;">
+                    <h3 style="margin: 0; color: white; font-size: 1.5rem; font-weight: 700;">
+                        🔐 SISTEMA DE LOGIN
+                    </h3>
+                </div>
+                <p style="color: {OPTIMITIVE_COLORS['text_secondary']}; margin: 0; font-size: 1rem;">
+                    Ingrese sus credenciales para acceder al sistema
+                </p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    # Features Section
+    st.markdown("### ✨ Características Principales")
+    
+    feature_cols = st.columns(3)
+    
+    with feature_cols[0]:
+        st.markdown(f"""
+        <div style="background: {OPTIMITIVE_COLORS['medium_bg']}; padding: 2rem; border-radius: 15px; 
+                    text-align: center; border-left: 5px solid {OPTIMITIVE_COLORS['success']}; height: 200px;">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🔍</div>
+            <h4 style="color: {OPTIMITIVE_COLORS['text_primary']}; margin: 0.5rem 0;">Análisis Inteligente</h4>
+            <p style="color: {OPTIMITIVE_COLORS['text_secondary']}; font-size: 0.9rem; margin: 0;">
+                Detección automática de flags y análisis avanzado de patrones en archivos
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with feature_cols[1]:
+        st.markdown(f"""
+        <div style="background: {OPTIMITIVE_COLORS['medium_bg']}; padding: 2rem; border-radius: 15px; 
+                    text-align: center; border-left: 5px solid {OPTIMITIVE_COLORS['accent_blue']}; height: 200px;">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">🔗</div>
+            <h4 style="color: {OPTIMITIVE_COLORS['text_primary']}; margin: 0.5rem 0;">SharePoint Integration</h4>
+            <p style="color: {OPTIMITIVE_COLORS['text_secondary']}; font-size: 0.9rem; margin: 0;">
+                Conexión directa con SharePoint para análisis de archivos en tiempo real
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    with feature_cols[2]:
+        st.markdown(f"""
+        <div style="background: {OPTIMITIVE_COLORS['medium_bg']}; padding: 2rem; border-radius: 15px; 
+                    text-align: center; border-left: 5px solid {OPTIMITIVE_COLORS['warning']}; height: 200px;">
+            <div style="font-size: 3rem; margin-bottom: 1rem;">📊</div>
+            <h4 style="color: {OPTIMITIVE_COLORS['text_primary']}; margin: 0.5rem 0;">Reportes Avanzados</h4>
+            <p style="color: {OPTIMITIVE_COLORS['text_secondary']}; font-size: 0.9rem; margin: 0;">
+                Generación de reportes profesionales en HTML, CSV y PDF
+            </p>
+        </div>
+        """, unsafe_allow_html=True)
+    
+    st.markdown("---")
+    
+    # Credentials Info
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, {OPTIMITIVE_COLORS['accent_blue']} 0%, #0077AA 100%);
+                padding: 2rem; border-radius: 20px; text-align: center; color: white; margin: 2rem 0;">
+        <h4 style="margin: 0 0 1rem 0; font-size: 1.3rem;">💡 Credenciales de Acceso</h4>
+        <div style="display: flex; justify-content: center; gap: 2rem; flex-wrap: wrap;">
+            <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 10px; backdrop-filter: blur(10px);">
+                <strong>👨‍💼 Admin</strong><br>
+                Usuario: <code>admin</code><br>
+                Contraseña: <code>admin123</code>
+            </div>
+            <div style="background: rgba(255,255,255,0.1); padding: 1rem; border-radius: 10px; backdrop-filter: blur(10px);">
+                <strong>👤 Demo</strong><br>
+                Usuario: <code>demo</code><br>
+                Contraseña: <code>demo123</code>
+            </div>
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+
+# =========================
+# GLOBAL FILE PROCESSING
+# =========================
+def process_global_files(uploaded_files):
+    """Process uploaded files and store globally for all modules"""
+    if not uploaded_files:
+        return
+    
+    try:
+        # Separate files by type
+        txt_files = [f for f in uploaded_files if f.name.endswith('.txt')]
+        osf_files = [f for f in uploaded_files if f.name.endswith('.osf')]
+        
+        # Store files for metrics dashboard (txt files)
+        if txt_files:
+            metrics_df = OptibatMetricsAnalyzer.load_and_process_files(txt_files)
+            st.session_state['global_metrics_data'] = metrics_df
+            st.session_state['global_txt_files'] = txt_files
+        
+        # Store files for monthly report generator (osf + txt files)
+        if txt_files or osf_files:
+            files_data = {"SampleFiles": [], "Statistics": []}
+            
+            # Process OSF files
+            for file in osf_files:
+                content = file.read()
+                files_data["SampleFiles"].append((file.name, content))
+                file.seek(0)  # Reset file pointer
+            
+            # Process TXT files  
+            for file in txt_files:
+                content = file.read()
+                files_data["Statistics"].append((file.name, content))
+                file.seek(0)  # Reset file pointer
+            
+            st.session_state['global_files_data'] = files_data
+            st.session_state['global_all_files'] = uploaded_files
+            
+        st.session_state['files_loaded'] = True
+        
+    except Exception as e:
+        st.error(f"❌ Error procesando archivos: {str(e)}")
+        st.session_state['files_loaded'] = False
+
+# =========================
+# MAIN APPLICATION
+# =========================
+def main():
+    # Register access metrics
+    if 'access_logged' not in st.session_state:
+        st.session_state['access_logged'] = True
+        user_ip = get_ip()
+        log_access(user_ip)
+    
+    # Initialize analyzer if not in session state
+    if 'analyzer' not in st.session_state:
+        st.session_state.analyzer = OptibatMetricsAnalyzer()
+    
+    # Simple authentication check
+    authenticated, user_info = check_authentication()
+    
+    if not authenticated:
+        show_simple_login()
+        st.stop()
+    
+    # Get user name for display (pero no mostrar en header)
+    user_name = st.session_state.get('user_name', 'Usuario')
+    
+    # Sidebar simplificado
+    with st.sidebar:
+        st.markdown(f"""
+        <div style="background: linear-gradient(135deg, {OPTIMITIVE_COLORS['primary_red']} 0%, #CC1A2C 100%);
+                    padding: 1rem; border-radius: 10px; text-align: center; margin-bottom: 1rem;">
+            <h3 style="color: white; margin: 0;">CARGA DE DATOS</h3>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        # Global File Uploader
+        uploaded_files_global = st.file_uploader(
+            "Selecciona archivos STATISTICS (.txt)",
+            type=['txt'],
+            accept_multiple_files=True,
+            key="global_file_uploader",
+            help="Archivos STATISTICS_VIEW_SUMMARY.txt"
+        )
+        
+        if uploaded_files_global:
+            # Process and store files globally
+            process_global_files(uploaded_files_global)
+            
+            st.success(f"Cargados {len(uploaded_files_global)} archivo(s) correctamente")
+                
+        # Cliente Detection
+        if uploaded_files_global and 'global_metrics_data' in st.session_state:
+            df_global = st.session_state['global_metrics_data']
+            detected_client = detect_client_from_flags(df_global.columns)
+            available_flags = get_available_flags_in_data(df_global)
+            
+            st.markdown("---")
+            st.markdown(f"""
+            <div style="background: {OPTIMITIVE_COLORS['medium_bg']}; padding: 1rem; border-radius: 10px;">
+                <h4 style="color: {OPTIMITIVE_COLORS['primary_red']}; margin: 0 0 0.5rem 0;">CLIENTE DETECTADO</h4>
+                <p style="margin: 0; font-weight: bold;">{detected_client}</p>
+                <p style="margin: 0.5rem 0 0 0; font-size: 0.9rem;">Flags disponibles: {len(available_flags)}</p>
+            </div>
+            """, unsafe_allow_html=True)
+        
+        # Info compacta
+        with st.expander("Sistema de Flags"):
+            st.markdown(f"""
+            **Flags Principales Monitoreados:**
+            - OPTIBAT_ON → Sistema principal activo
+            - Flag_Ready → Sistema listo para operación  
+            - Communication_ECS → Comunicación con ECS
+            - Support_Flag_Copy → Flag de soporte
+            - Macrostates_Flag_Copy → Estados macro
+            - Resultexistance_Flag_Copy → Existencia resultados
+            - OPTIBAT_WATCHDOG → Monitor de sistema
+            
+            **Clientes Configurados:** {len(CLIENT_FLAGS_MAPPING)}
+            """)
+        
+        # Botón de cerrar sesión en la parte inferior del sidebar
+        st.markdown("---")
+        st.markdown(f"**Usuario:** {user_name}")
+        if st.button("Cerrar Sesión", use_container_width=True, type="secondary"):
+            # Clear session state
+            for key in list(st.session_state.keys()):
+                del st.session_state[key]
+            st.rerun()
+    
+    # CONTENIDO PRINCIPAL UNIFICADO
+    show_unified_dashboard()
+    
+    # Footer
+    st.markdown("""
+    <div class="footer">
+        <h3 style="color: #E31E32; margin-bottom: 1rem;">OPTIMITIVE</h3>
+        <p><strong>© 2024 Optimitive | AI Optimization Solutions</strong></p>
+        <p>🌐 <a href="https://optimitive.com" target="_blank" style="color: #E31E32;">optimitive.com</a></p>
+        <p><strong>Developed by Juan Cruz E.</strong> | Monthly Report Generator v1.0.0</p>
+    </div>
+    """, unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()

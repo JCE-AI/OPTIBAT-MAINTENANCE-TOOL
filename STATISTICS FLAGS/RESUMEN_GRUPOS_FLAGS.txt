@@ -1,0 +1,115 @@
+RESUMEN DE ACTIVOS CON CONFIGURACIONES IDÉNTICAS DE FLAGS
+============================================================
+Fecha de análisis: 30/08/2025 18:11
+============================================================
+
+GRUPO 1: 4 activos con configuración idéntica
+------------------------------------------------------------
+Activos: ABG DHAR, ABG PALI, MOLINS ALION COLOMBIA, MOLINS-BCN-BARACELONA
+
+Flags comunes (5):
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_RESULTEXISTANCE
+  - OPTIBAT_SUPPORT
+
+============================================================
+
+GRUPO 2: 4 activos con configuración idéntica
+------------------------------------------------------------
+Activos: TITAN-KOSJERIC-CM1, TITAN-KOSJERIC-KILN, TITAN-KOSJERIC-RM1, TITAN-PENNSUCO-VRM
+
+Flags comunes (6):
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_RESULTEXISTANCE
+  - OPTIBAT_SUPPORT
+
+============================================================
+
+GRUPO 3: 3 activos con configuración idéntica
+------------------------------------------------------------
+Activos: TITAN ALEXANDRIA CM7, TITAN ALEXANDRIA CM8, TITAN ALEXANDRIA CM9
+
+Flags comunes (5):
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_SUPPORT
+
+============================================================
+
+GRUPO 4: 3 activos con configuración idéntica
+------------------------------------------------------------
+Activos: TITAN-ROANOKE-FM10, TITAN-ROANOKE-KILN, TITAN-ROANOKE-RM1
+
+Flags comunes (2):
+  - Communication_Flag
+  - OPTIBAT_READY
+
+============================================================
+
+GRUPO 5: 3 activos con configuración idéntica
+------------------------------------------------------------
+Activos: TITAN-SHARR-CM2, TITAN-SHARR-KILN, TITAN-SHARR-RM2
+
+Flags comunes (1):
+  - OPTIBAT_READY
+
+============================================================
+
+GRUPO 6: 2 activos con configuración idéntica
+------------------------------------------------------------
+Activos: TITAN-PENNSUCO-FM3, TITAN-PENNSUCO-KILN
+
+Flags comunes (6):
+  - KILN_OPTIBAT_COMMUNICATION
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_RESULTEXISTANCE
+  - OPTIBAT_SUPPORT
+
+============================================================
+
+ACTIVOS CON CONFIGURACIÓN ÚNICA
+------------------------------------------------------------
+
+CEMEX FM1 BALCONES: 7 flags
+  - Communication_ECS
+  - Flag_Ready
+  - Macrostates_Flag_Copy
+  - OPTIBAT_ON
+  - OPTIBAT_WATCHDOG
+  - Resultexistance_Flag_Copy
+  - Support_Flag_Copy
+
+ABG DALLA: 7 flags
+  - OPTIBAT_COMMUNICATION
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_READY
+  - OPTIBAT_RESULTEXISTANCE
+  - OPTIBAT_SUPPORT
+  - OPTIBAT_WATCHDOG
+
+CRH LEMONA: 5 flags
+  - OPTIBAT_MACROSTATES
+  - OPTIBAT_ON
+  - OPTIBAT_RESULTEXISTANCE
+  - OPTIBAT_Ready_fromPLANT
+  - OPTIBAT_SUPPORT
+
+ANGUS: SIN FLAGS
+
+============================================================
+ESTADÍSTICAS FINALES
+------------------------------------------------------------
+Total de activos analizados: 23
+Grupos con configuración idéntica: 6
+Activos con configuración única: 4
+Activos agrupados: 19
