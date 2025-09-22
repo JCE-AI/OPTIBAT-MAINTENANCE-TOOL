@@ -4312,21 +4312,36 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
         else:
             date_range_str = "Rango de fechas no disponible"
         
-        # Generar gráficos en HTML
+        # Generar gráficos en HTML con configuración fija para evitar rotación
+        # IMPORTANTE: config={'responsive': False} evita que los gráficos se roten en Streamlit Cloud
+        plotly_config = {'responsive': False, 'displayModeBar': False}
+        
         donut_fig = OptibatMetricsAnalyzer.create_global_donut_chart(df_display)
-        donut_html = donut_fig.to_html(include_plotlyjs='inline', div_id="donut_chart")
+        donut_html = donut_fig.to_html(
+            include_plotlyjs='inline', 
+            div_id="donut_chart",
+            config=plotly_config
+        )
         
         timeline_html = ""
         if "Date" in df_display.columns and not df_display["Date"].dropna().empty:
             # Use intelligent flag detection for HTML export as well
             standard_flags_available = get_available_standard_flags(df_display)
             timeline_fig = OptibatMetricsAnalyzer.create_timeline_chart(df_display, standard_flags_available)
-            timeline_html = timeline_fig.to_html(include_plotlyjs=False, div_id="timeline_chart")
+            timeline_html = timeline_fig.to_html(
+                include_plotlyjs=False, 
+                div_id="timeline_chart",
+                config=plotly_config
+            )
         
         duration_html = ""
         if 'OPTIBAT_ON' in df_display.columns:
             duration_fig = OptibatMetricsAnalyzer.create_interactive_duration_chart(df_display, 'OPTIBAT_ON')
-            duration_html = duration_fig.to_html(include_plotlyjs=False, div_id="duration_chart")
+            duration_html = duration_fig.to_html(
+                include_plotlyjs=False, 
+                div_id="duration_chart",
+                config=plotly_config
+            )
         
         # Calcular resumen ON/OFF
         on_off_summary = ""
@@ -4466,6 +4481,17 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
                     color: #E31E32;
                     border-bottom: 2px solid #E31E32;
                     padding-bottom: 0.5rem;
+                }}
+                /* Fix para evitar rotación de gráficos en Streamlit Cloud */
+                .plotly-graph-div {{
+                    width: 100% !important;
+                    height: auto !important;
+                }}
+                .js-plotly-plot {{
+                    width: 100% !important;
+                }}
+                .plot-container {{
+                    width: 100% !important;
                 }}
                 .summary-section {{
                     background: white;
