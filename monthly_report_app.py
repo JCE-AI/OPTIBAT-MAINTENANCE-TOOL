@@ -4792,25 +4792,36 @@ def show_metrics_analysis(df_processed, available_flags):
     col_html1, col_html2 = st.columns([2, 1])
     
     with col_html1:
+        # Separate client name input
+        client_name_override = st.text_input(
+            "🏢 Client Name:",
+            value=detected_client_export,
+            help="Customize the client name that will appear in the HTML report"
+        )
+        
         custom_title = st.text_input(
             "🏷️ Custom title for HTML report:",
-            value=f"OPTIBAT Report - {detected_client_export} - {datetime.now().strftime('%B %Y')}",
+            value=f"OPTIBAT Report - {client_name_override} - {datetime.now().strftime('%B %Y')}",
             help="This title will appear in the HTML report header"
         )
     
     with col_html2:
         if st.button("🚀 GENERATE HTML REPORT", type="primary", use_container_width=True):
             with st.spinner("Generating complete HTML report..."):
+                # Get selected variables from session state
+                selected_variables = st.session_state.get("advanced_analysis_variables", [])
+                
                 html_content = generate_complete_html_report(
                     df_display, 
                     available_flags, 
-                    detected_client_export, 
+                    client_name_override, 
                     custom_title,
-                    date_range_main
+                    date_range_main,
+                    selected_variables
                 )
                 
                 timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-                filename = f"OPTIBAT_Dashboard_{detected_client_export}_{timestamp}.html"
+                filename = f"OPTIBAT_Dashboard_{client_name_override.replace(' ', '_')}_{timestamp}.html"
                 
                 st.download_button(
                     label="⬇️ Descargar Reporte HTML",
@@ -4825,10 +4836,12 @@ def show_metrics_analysis(df_processed, available_flags):
 # =========================
 # HTML EXPORT FUNCTION
 # =========================
-def generate_complete_html_report(df_display, available_flags, detected_client, custom_title, date_range_main):
+def generate_complete_html_report(df_display, available_flags, detected_client, custom_title, date_range_main, selected_variables=None):
     """
     Generate complete HTML report that replicates the exact dashboard with all graphs
     """
+    if selected_variables is None:
+        selected_variables = []
     # Detect required columns
     ready_col = detect_ready_flag_in_dataframe(df_display)
     on_col = detect_on_flag_in_dataframe(df_display) 
@@ -5015,7 +5028,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     if available_flags and 'Date' in df_display.columns and not df_display['Date'].dropna().empty:
         # Create the timeline chart using the same function as dashboard but without title
         timeline_fig = OptibatMetricsAnalyzer.create_timeline_chart(df_display, available_flags, show_title=False)
-        timeline_fig.update_layout(height=600)
+        timeline_fig.update_layout(height=450)
         
         charts_html.append(f"""
         <div class="section-container">
@@ -5027,7 +5040,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     # SECTION 6: SYSTEM STATES TIME SERIES
     if on_col and 'Date' in df_display.columns and not df_display['Date'].dropna().empty:
         temporal_states_fig = ts_with_background_regions(df_display, 'Date', on_col, ready_col, show_durations=False)
-        temporal_states_fig.update_layout(height=600)
+        temporal_states_fig.update_layout(height=450)
         
         charts_html.append(f"""
         <div class="section-container">
@@ -5044,16 +5057,22 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     
     # Generate all 8 charts exactly as in dashboard
     
-    # Chart 1: Combined Evolution (conditional based on ready_col availability)
+    # Chart 1: Combined Evolution (conditional based on ready_col availability and selected variables)
     if ready_col and ready_col in df_display.columns and not df_display[ready_col].dropna().empty:
-        title_1 = "1. Temporal Evolution: OPTIBAT_READY and Closed Loop"
+        base_title = "1. Temporal Evolution: OPTIBAT_READY and Closed Loop"
     else:
-        title_1 = "1. Temporal Evolution: Closed Loop"
+        base_title = "1. Temporal Evolution: Closed Loop"
+    
+    # Update title to include selected variables (matching dashboard behavior)
+    if selected_variables:
+        title_1 = f"{base_title} + {len(selected_variables)} Additional Variables"
+    else:
+        title_1 = base_title
     
     if "Date" in df_display.columns:
-        fig1 = create_combined_evolution_chart(df_display, ready_col, on_col)
-        # Fix hover mode for HTML to avoid duplicate tooltips
-        fig1.update_layout(hovermode='closest')
+        fig1 = create_combined_evolution_chart(df_display, ready_col, on_col, selected_variables)
+        # Fix hover mode for HTML to avoid duplicate tooltips and reduce height
+        fig1.update_layout(hovermode='closest', height=500)
         charts_html.append(f"""
         <div class="chart-box">
         <h3>{title_1}</h3>
@@ -5063,7 +5082,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     
     # Chart 2: Closed Loop Time Percentage by File
     fig2 = create_closed_loop_by_file_chart(df_with_file, on_col)
-    fig2.update_layout(hovermode='closest')
+    fig2.update_layout(hovermode='closest', height=500)
     charts_html.append(f"""
     <div class="chart-box">
     <h3>2. Closed Loop Time Percentage by File</h3>
@@ -5074,7 +5093,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     # Chart 3: OPTIBAT Ready and Not Ready by File (conditional)
     if ready_col and ready_col in df_display.columns:
         fig3 = create_ready_by_file_chart(df_with_file, ready_col)
-        fig3.update_layout(hovermode='closest')
+        fig3.update_layout(hovermode='closest', height=500)
         charts_html.append(f"""
         <div class="chart-box">
         <h3>3. OPTIBAT Ready and Not Ready by File</h3>
@@ -5091,7 +5110,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     
     # Chart 4: Open and Closed Loop Utilization by File
     fig4 = create_loop_usage_by_file_chart(df_with_file, on_col)
-    fig4.update_layout(hovermode='closest')
+    fig4.update_layout(hovermode='closest', height=500)
     charts_html.append(f"""
     <div class="chart-box">
     <h3>4. Open and Closed Loop Utilization by File</h3>
@@ -5102,7 +5121,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     # Chart 5: Number of OPTIBAT Ready Drops by Weekday (conditional)
     if ready_col and ready_col in df_display.columns and "Date" in df_display.columns:
         fig5 = create_ready_downs_by_weekday_chart(df_display, ready_col)
-        fig5.update_layout(hovermode='closest')
+        fig5.update_layout(hovermode='closest', height=500)
         charts_html.append(f"""
         <div class="chart-box">
         <h3>5. Number of OPTIBAT Ready Drops by Weekday</h3>
@@ -5120,7 +5139,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     # Chart 6: OPTIBAT Ready Drop Times (conditional)  
     if ready_col and ready_col in df_display.columns and "Date" in df_display.columns:
         fig6 = create_ready_downs_by_hour_chart(df_display, ready_col)
-        fig6.update_layout(hovermode='closest')
+        fig6.update_layout(hovermode='closest', height=500)
         charts_html.append(f"""
         <div class="chart-box">
         <h3>6. OPTIBAT Ready Drop Times</h3>
@@ -5138,7 +5157,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     # Chart 7: Duration of OPTIBAT Ready Periods (conditional)
     if ready_col and ready_col in df_display.columns and "Date" in df_display.columns:
         fig7 = create_ready_duration_chart(df_display, ready_col)
-        fig7.update_layout(hovermode='closest')
+        fig7.update_layout(hovermode='closest', height=500)
         charts_html.append(f"""
         <div class="chart-box">
         <h3>7. Duration of OPTIBAT Ready Periods</h3>
@@ -5156,7 +5175,7 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
     # Chart 8: Duration of OPTIBAT_ON=1 Periods (Service Time)
     if "Date" in df_display.columns and on_col:
         fig8 = create_optibat_on_duration_chart(df_display, on_col)
-        fig8.update_layout(hovermode='closest')
+        fig8.update_layout(hovermode='closest', height=500)
         charts_html.append(f"""
         <div class="chart-box">
         <h3>8. Duration of OPTIBAT_ON=1 Periods (Service Time)</h3>
@@ -5260,15 +5279,15 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
                 margin: 0 !important;
             }}
             .section-container {{
-                margin: 40px 0;
-                padding: 30px;
+                margin: 20px 0;
+                padding: 20px;
                 background: white;
                 border-radius: 15px;
                 box-shadow: 0 4px 8px rgba(0,0,0,0.1);
             }}
             .chart-box {{
-                margin: 30px 0;
-                padding: 25px;
+                margin: 15px 0;
+                padding: 15px;
                 background: #f8f9fa;
                 border: 1px solid #e0e0e0;
                 border-radius: 10px;
@@ -5392,7 +5411,27 @@ def generate_complete_html_report(df_display, available_flags, detected_client, 
                 <h4>RECORDS</h4>
                 <h3>{len(df_display):,}</h3>
             </div>
+            <div class="info-card">
+                <h4>SELECTED VARIABLES</h4>
+                <h3>{len(selected_variables)}</h3>
+            </div>
         </div>
+        
+        {f'''
+        <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 20px; border-radius: 15px; margin: 20px 0; border-left: 4px solid #E31E32;">
+            <h4 style="color: #E31E32; margin: 0 0 10px 0;">📊 Multi-Variable Analysis Configuration</h4>
+            <p style="margin: 0; color: #495057;">
+                <strong>Variables:</strong> {", ".join(selected_variables) if selected_variables else "None selected - showing only main OPTIBAT flags"}
+            </p>
+        </div>
+        ''' if selected_variables else '''
+        <div style="background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%); padding: 20px; border-radius: 15px; margin: 20px 0; border-left: 4px solid #6c757d;">
+            <h4 style="color: #6c757d; margin: 0 0 10px 0;">📊 Multi-Variable Analysis Configuration</h4>
+            <p style="margin: 0; color: #495057;">
+                <strong>Variables:</strong> None selected - showing only main OPTIBAT flags
+            </p>
+        </div>
+        '''}
         
         <div class="chart-container">
             <h2 style="text-align: center; color: #E31E32; margin-bottom: 2rem;">Advanced System Analysis</h2>
